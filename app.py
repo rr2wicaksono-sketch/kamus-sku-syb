@@ -48,8 +48,6 @@ with tab1:
             data_master = sku_master.data[0]
             st.success(f"**SKU Ditemukan:** {data_master['sku_code']}")
             st.write(f"**Nama Etalase:** {data_master['display_name']}")
-            if data_master.get('shopee_id'):
-                st.write(f"**Kode Shopee:** {data_master['shopee_id']}")
                 
             st.markdown("---")
             st.subheader("📋 Rincian / Komposisi Produk:")
@@ -65,11 +63,11 @@ with tab1:
 # --- TAB 2: DAFTAR SEMUA SKU (PUBLIC) ---
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
-    all_skus = supabase.table("skus").select("sku_code, display_name, shopee_id").order("sku_code").execute()
+    all_skus = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
 
     if all_skus.data:
         df_skus = pd.DataFrame(all_skus.data)
-        df_skus.rename(columns={'sku_code': 'Kode SKU', 'display_name': 'Nama Etalase', 'shopee_id': 'Kode Shopee'}, inplace=True)
+        df_skus.rename(columns={'sku_code': 'Kode SKU', 'display_name': 'Nama Etalase'}, inplace=True)
         
         filter_text = st.text_input("🔎 Filter daftar (cari kode / etalase):", "").strip()
         if filter_text:
@@ -81,7 +79,7 @@ with tab2:
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# --- TAB 3: INPUT DATA BARU (DENGAN VERIFIKASI PASSWORD) ---
+# --- TAB 3: INPUT DATA BARU (TANPA SHOPEE ID) ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -108,7 +106,6 @@ with tab3:
         with st.form("form_tambah_sku", clear_on_submit=True):
             st.info(f"Saran Kode SKU Otomatis Selanjutnya: **{suggested_sku}**")
             new_sku = st.text_input("Kode SKU Utama*", value=suggested_sku).strip().upper()
-            new_shopee_id = st.text_input("Kode Shopee (opsional)").strip()
             new_display_name = st.text_input("Nama Etalase / Produk*").strip()
             
             st.markdown("---")
@@ -138,7 +135,6 @@ with tab3:
                     try:
                         supabase.table("skus").upsert({
                             "sku_code": new_sku,
-                            "shopee_id": new_shopee_id if new_shopee_id else None,
                             "display_name": new_display_name
                         }).execute()
                         
@@ -161,7 +157,7 @@ with tab3:
                     except Exception as e:
                         st.error(f"Gagal menyimpan data: {e}")
 
-# --- TAB 4: EDIT SKU (DENGAN VERIFIKASI PASSWORD MENDALAM) ---
+# --- TAB 4: EDIT SKU (TANPA SHOPEE ID) ---
 with tab4:
     st.subheader("✏️ Edit Data SKU & Komposisi")
     
@@ -208,7 +204,6 @@ with tab4:
                 
                 st.info(f"📌 **Detail SKU Terpilih:** {sku_info['sku_code']}")
                 st.write(f"**Nama Etalase:** {sku_info['display_name']}")
-                st.write(f"**Kode Shopee:** {sku_info.get('shopee_id') or '-'}")
                 
                 st.write("**Komposisi Produk Eksisting:**")
                 if comps_info:
@@ -227,7 +222,6 @@ with tab4:
                     st.subheader(f"Form Edit SKU: {selected_sku}")
                     
                     with st.form(f"form_edit_sku_{selected_sku}"):
-                        edit_shopee_id = st.text_input("Kode Shopee", value=sku_info.get('shopee_id') or "")
                         edit_display_name = st.text_input("Nama Etalase / Produk*", value=sku_info.get('display_name') or "")
                         
                         st.markdown("---")
@@ -257,7 +251,6 @@ with tab4:
                             else:
                                 try:
                                     supabase.table("skus").update({
-                                        "shopee_id": edit_shopee_id if edit_shopee_id else None,
                                         "display_name": edit_display_name
                                     }).eq("sku_code", selected_sku).execute()
                                     
