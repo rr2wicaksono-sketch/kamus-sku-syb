@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Paksa hapus seluruh cache Streamlit
+# Paksa hapus cache Streamlit
 st.cache_data.clear()
 
 # --- SETTING PASSWORD ADMIN ---
@@ -67,11 +67,10 @@ with tab1:
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
     
-    # Ambil data dari Supabase
+    # Query hanya mengambil sku_code dan display_name
     all_skus = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
 
     if all_skus.data:
-        # Konstruksi DataFrame murni hanya dengan 2 kolom
         raw_data = [{"Kode SKU": item["sku_code"], "Nama Etalase": item["display_name"]} for item in all_skus.data]
         df_skus = pd.DataFrame(raw_data)
         
