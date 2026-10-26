@@ -14,7 +14,6 @@ supabase = init_supabase()
 
 st.title("📦 Kamus & Management SKU")
 
-# Buat Tab Menu: Pencarian & Input Baru
 tab1, tab2 = st.tabs(["🔍 Cari SKU", "➕ Tambah SKU Baru"])
 
 # --- TAB 1: PENCARIAN SKU ---
@@ -43,7 +42,7 @@ with tab1:
         else:
             st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
 
-# --- TAB 2: INPUT DATA BARU ---
+# --- TAB 2: INPUT DATA BARU (DILENGKAPI HINGGA 7 PRODUK) ---
 with tab2:
     st.subheader("Input SKU Master / Bundling Baru")
     
@@ -53,16 +52,36 @@ with tab2:
         new_display_name = st.text_input("Nama Etalase / Produk*").strip()
         
         st.markdown("---")
-        st.write("**Isi Komposisi Produk Pertama (Wajib):**")
-        comp1_qty = st.number_input("QTY Item 1", min_value=1, value=1)
-        comp1_name = st.text_input("Nama Produk Satuan 1*").strip()
-        comp1_sku = st.text_input("SKU Satuan 1 (misal: SYB104)*").strip().upper()
+        st.subheader("📦 Komposisi Produk Bundling (Max 7 Item)")
         
-        submitted = st.form_submit_button("Simpan SKU Baru")
+        # Loop untuk membuat form 7 Produk (Produk 1 Wajib, 2-7 Opsional)
+        items_input = []
+        for i in range(1, 8):
+            is_required = "(Wajib)" if i == 1 else "(Opsional)"
+            st.write(f"**Produk {i} {is_required}:**")
+            col1, col2, col3 = st.columns([1, 2, 2])
+            
+            with col1:
+                p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, key=f"qty_{i}")
+            with col2:
+                p_sku = st.text_input(f"SKU Satuan {i}", key=f"sku_{i}").strip().upper()
+            with col3:
+                p_name = st.text_input(f"Nama Produk Satuan {i}", key=f"name_{i}").strip()
+                
+            items_input.append({
+                'index': i,
+                'qty': p_qty,
+                'sku': p_sku,
+                'name': p_name
+            })
+            st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+        
+        submitted = st.form_submit_button("Simpan SKU & Seluruh Komposisi")
         
         if submitted:
-            if not new_sku or not new_display_name or not comp1_name or not comp1_sku:
-                st.error("Semua kolom bertanda * wajib diisi!")
+            # Validasi input utama & produk 1
+            if not new_sku or not new_display_name or not items_input[0]['sku'] or not items_input[0]['name']:
+                st.error("Kode SKU Utama, Nama Etalase, serta SKU & Nama Produk 1 WAJIB diisi!")
             else:
                 try:
                     # 1. Simpan ke master skus
@@ -72,14 +91,21 @@ with tab2:
                         "display_name": new_display_name
                     }).execute()
                     
-                    # 2. Simpan komponen 1
-                    supabase.table("sku_components").insert({
-                        "parent_sku": new_sku,
-                        "qty": comp1_qty,
-                        "product_name": comp1_name,
-                        "child_sku": comp1_sku
-                    }).execute()
+                    # 2. Filter & kumpulkan komponen yang diisi saja
+                    components_to_insert = []
+                    for item in items_input:
+                        if item['sku'] or item['name']:  # Jika SKU atau Nama diisi
+                            components_to_insert.append({
+                                "parent_sku": new_sku,
+                                "qty": item['qty'],
+                                "product_name": item['name'] if item['name'] else item['sku'],
+                                "child_sku": item['sku'] if item['sku'] else None
+                            })
                     
-                    st.success(f"Berhasil menambahkan SKU '{new_sku}' ke database!")
+                    # 3. Simpan ke sku_components
+                    if components_to_insert:
+                        supabase.table("sku_components").insert(components_to_insert).execute()
+                    
+                    st.success(f"Berhasil menyimpan SKU '{new_sku}' beserta {len(components_to_insert)} rincian produk!")
                 except Exception as e:
                     st.error(f"Gagal menyimpan data: {e}")
