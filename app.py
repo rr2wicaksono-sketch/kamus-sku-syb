@@ -5,10 +5,11 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Paksa bersihkan cache
+# Hapus cache Streamlit agar data lama tidak tersisa
 st.cache_data.clear()
 
-ADMIN_PASSWORD = "admin123"
+# --- SETTING PASSWORD ADMIN ---
+ADMIN_PASSWORD = "admin123"  # Ganti password ini sesuai keinginanmu!
 
 SUPABASE_URL = "https://cswevaxdtjnkakppsowx.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzd2V2YXhkdGpua2FrcHBzb3d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NjM2NjQsImV4cCI6MjEwODUzOTY2NH0.iuAcjRRuF20fOhA7X2Z9QPEiEm9I2z4Typb6yLs9Zss"
@@ -23,6 +24,7 @@ st.title("📦 Kamus & Management SKU")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit SKU"])
 
+# --- FUNGSI AUTO GENERATE SKU ---
 def generate_next_sku(prefix):
     res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").execute()
     max_num = 0
@@ -37,7 +39,7 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# TAB 1: CARI SKU
+# --- TAB 1: PENCARIAN SKU ---
 with tab1:
     st.write("Cari detail komposisi produk satuan maupun bundling.")
     query_sku = st.text_input("Masukkan Kode SKU:", "").strip().upper()
@@ -61,7 +63,7 @@ with tab1:
         else:
             st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
 
-# TAB 2: DAFTAR SEMUA SKU
+# --- TAB 2: DAFTAR SEMUA SKU (DICTIONARY 2 KOLOM) ---
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
     
@@ -81,7 +83,7 @@ with tab2:
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# TAB 3: TAMBAH SKU
+# --- TAB 3: INPUT DATA BARU ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -159,7 +161,7 @@ with tab3:
                     except Exception as e:
                         st.error(f"Gagal menyimpan data: {e}")
 
-# TAB 4: EDIT SKU
+# --- TAB 4: EDIT SKU ---
 with tab4:
     st.subheader("✏️ Edit Data SKU & Komposisi")
     
