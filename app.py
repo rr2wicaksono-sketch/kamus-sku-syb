@@ -5,11 +5,10 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Hapus cache Streamlit agar data lama tidak tersisa
+# Paksa bersihkan cache agar data terupdate
 st.cache_data.clear()
 
-# --- SETTING PASSWORD ADMIN ---
-ADMIN_PASSWORD = "admin123"  # Ganti password ini sesuai keinginanmu!
+ADMIN_PASSWORD = "admin123"
 
 SUPABASE_URL = "https://cswevaxdtjnkakppsowx.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzd2V2YXhkdGpua2FrcHBzb3d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NjM2NjQsImV4cCI6MjEwODUzOTY2NH0.iuAcjRRuF20fOhA7X2Z9QPEiEm9I2z4Typb6yLs9Zss"
@@ -22,9 +21,8 @@ supabase = init_supabase()
 
 st.title("📦 Kamus & Management SKU")
 
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit SKU"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit & Hapus SKU"])
 
-# --- FUNGSI AUTO GENERATE SKU ---
 def generate_next_sku(prefix):
     res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").execute()
     max_num = 0
@@ -39,7 +37,7 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# --- TAB 1: PENCARIAN SKU ---
+# --- TAB 1: CARI SKU ---
 with tab1:
     st.write("Cari detail komposisi produk satuan maupun bundling.")
     query_sku = st.text_input("Masukkan Kode SKU:", "").strip().upper()
@@ -63,7 +61,7 @@ with tab1:
         else:
             st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
 
-# --- TAB 2: DAFTAR SEMUA SKU (DICTIONARY 2 KOLOM) ---
+# --- TAB 2: DAFTAR SEMUA SKU ---
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
     
@@ -83,7 +81,7 @@ with tab2:
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# --- TAB 3: INPUT DATA BARU ---
+# --- TAB 3: TAMBAH SKU ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -161,17 +159,17 @@ with tab3:
                     except Exception as e:
                         st.error(f"Gagal menyimpan data: {e}")
 
-# --- TAB 4: EDIT SKU ---
+# --- TAB 4: EDIT & HAPUS SKU ---
 with tab4:
-    st.subheader("✏️ Edit Data SKU & Komposisi")
+    st.subheader("✏️ Edit / 🗑️ Hapus SKU")
     
     if "auth_tab4" not in st.session_state:
         st.session_state.auth_tab4 = False
 
     if not st.session_state.auth_tab4:
-        st.warning("🔒 Khusus Admin: Masukkan password untuk mengakses fitur Edit SKU.")
-        pwd_t4 = st.text_input("Password Admin (Edit SKU):", type="password", key="pwd_tab4")
-        if st.button("Buka Akses Edit SKU", key="btn_auth_tab4"):
+        st.warning("🔒 Khusus Admin: Masukkan password untuk mengedit / menghapus SKU.")
+        pwd_t4 = st.text_input("Password Admin (Edit/Hapus SKU):", type="password", key="pwd_tab4")
+        if st.button("Buka Akses Edit & Hapus SKU", key="btn_auth_tab4"):
             if pwd_t4 == ADMIN_PASSWORD:
                 st.session_state.auth_tab4 = True
                 st.success("Akses diterima!")
@@ -179,8 +177,8 @@ with tab4:
             else:
                 st.error("Password salah!")
     else:
-        st.success("🔓 Akses Admin Aktif (Edit SKU)")
-        search_method = st.radio("Metode Cari SKU yang Mau Diedit:", ["Pilih dari Dropdown List", "Ketik Kode SKU"], horizontal=True)
+        st.success("🔓 Akses Admin Aktif (Edit & Hapus SKU)")
+        search_method = st.radio("Metode Cari SKU yang Mau Diolah:", ["Pilih dari Dropdown List", "Ketik Kode SKU"], horizontal=True)
         
         selected_sku = None
         
@@ -192,7 +190,7 @@ with tab4:
                 if choice != "-- Pilih SKU --":
                     selected_sku = choice.split(" - ")[0]
         else:
-            typed_sku = st.text_input("Ketik Kode SKU (misal: BSYB005):", "").strip().upper()
+            typed_sku = st.text_input("Ketik Kode SKU (misal: BSYB005 atau SYB001):", "").strip().upper()
             if typed_sku:
                 selected_sku = typed_sku
 
@@ -215,12 +213,47 @@ with tab4:
                 else:
                     st.write("*(Belum ada komponen)*")
                 
+                # TOMBOL AKSI: EDIT DAN HAPUS
+                col_b1, col_b2 = st.columns(2)
+                
                 if f"show_edit_form_{selected_sku}" not in st.session_state:
                     st.session_state[f"show_edit_form_{selected_sku}"] = False
-                
-                if st.button("✏️ Buka Form Edit SKU Ini", key=f"btn_open_edit_{selected_sku}"):
-                    st.session_state[f"show_edit_form_{selected_sku}"] = True
+                if f"confirm_delete_{selected_sku}" not in st.session_state:
+                    st.session_state[f"confirm_delete_{selected_sku}"] = False
 
+                with col_b1:
+                    if st.button("✏️ Edit SKU Ini", key=f"btn_open_edit_{selected_sku}", use_container_width=True):
+                        st.session_state[f"show_edit_form_{selected_sku}"] = True
+                        st.session_state[f"confirm_delete_{selected_sku}"] = False
+
+                with col_b2:
+                    if st.button("🗑️ Hapus SKU Ini", key=f"btn_open_del_{selected_sku}", type="secondary", use_container_width=True):
+                        st.session_state[f"confirm_delete_{selected_sku}"] = True
+                        st.session_state[f"show_edit_form_{selected_sku}"] = False
+
+                # KONFIRMASI HAPUS PERMANEN
+                if st.session_state.get(f"confirm_delete_{selected_sku}"):
+                    st.warning(f"⚠️ Apakah kamu yakin ingin menghapus SKU **'{selected_sku}'** secara permanen?")
+                    c_del1, c_del2 = st.columns(2)
+                    with c_del1:
+                        if st.button("🔴 Yakin, Hapus Permanen", key=f"btn_yes_delete_{selected_sku}", type="primary", use_container_width=True):
+                            try:
+                                # Hapus dari sku_components dulu lalu skus
+                                supabase.table("sku_components").delete().eq("parent_sku", selected_sku).execute()
+                                supabase.table("skus").delete().eq("sku_code", selected_sku).execute()
+                                
+                                st.success(f"Berhasil menghapus SKU '{selected_sku}' dari database!")
+                                st.cache_data.clear()
+                                st.session_state[f"confirm_delete_{selected_sku}"] = False
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Gagal menghapus SKU: {e}")
+                    with c_del2:
+                        if st.button("❌ Batal Hapus", key=f"btn_cancel_delete_{selected_sku}", use_container_width=True):
+                            st.session_state[f"confirm_delete_{selected_sku}"] = False
+                            st.rerun()
+
+                # FORM EDIT
                 if st.session_state.get(f"show_edit_form_{selected_sku}"):
                     st.markdown("---")
                     st.subheader(f"Form Edit SKU: {selected_sku}")
