@@ -5,6 +5,9 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
+# Paksa hapus cache Streamlit agar tabel lama langsung hilang
+st.cache_data.clear()
+
 # --- SETTING PASSWORD ADMIN ---
 ADMIN_PASSWORD = "admin123"  # Ganti password ini sesuai keinginanmu!
 
@@ -42,7 +45,7 @@ with tab1:
     query_sku = st.text_input("Masukkan Kode SKU:", "").strip().upper()
 
     if query_sku:
-        sku_master = supabase.table("skus").select("*").eq("sku_code", query_sku).execute()
+        sku_master = supabase.table("skus").select("sku_code, display_name").eq("sku_code", query_sku).execute()
         
         if sku_master.data:
             data_master = sku_master.data[0]
@@ -60,13 +63,16 @@ with tab1:
         else:
             st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
 
-# --- TAB 2: DAFTAR SEMUA SKU (PUBLIC) ---
+# --- TAB 2: DAFTAR SEMUA SKU (PUBLIC - TANPA KODE SHOPEE) ---
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
+    
+    # Hanya panggil kolom sku_code dan display_name
     all_skus = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
 
     if all_skus.data:
         df_skus = pd.DataFrame(all_skus.data)
+        df_skus = df_skus[['sku_code', 'display_name']]  # Kunci hanya 2 kolom
         df_skus.rename(columns={'sku_code': 'Kode SKU', 'display_name': 'Nama Etalase'}, inplace=True)
         
         filter_text = st.text_input("🔎 Filter daftar (cari kode / etalase):", "").strip()
@@ -79,7 +85,7 @@ with tab2:
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# --- TAB 3: INPUT DATA BARU (TANPA SHOPEE ID) ---
+# --- TAB 3: INPUT DATA BARU ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -157,7 +163,7 @@ with tab3:
                     except Exception as e:
                         st.error(f"Gagal menyimpan data: {e}")
 
-# --- TAB 4: EDIT SKU (TANPA SHOPEE ID) ---
+# --- TAB 4: EDIT SKU ---
 with tab4:
     st.subheader("✏️ Edit Data SKU & Komposisi")
     
@@ -194,7 +200,7 @@ with tab4:
 
         if selected_sku:
             st.markdown("---")
-            sku_res = supabase.table("skus").select("*").eq("sku_code", selected_sku).execute()
+            sku_res = supabase.table("skus").select("sku_code, display_name").eq("sku_code", selected_sku).execute()
             
             if not sku_res.data:
                 st.error(f"SKU '{selected_sku}' tidak ditemukan di database.")
