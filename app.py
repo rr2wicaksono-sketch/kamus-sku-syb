@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Paksa hapus cache Streamlit agar tabel lama langsung hilang
+# Paksa hapus seluruh cache Streamlit
 st.cache_data.clear()
 
 # --- SETTING PASSWORD ADMIN ---
@@ -63,17 +63,17 @@ with tab1:
         else:
             st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
 
-# --- TAB 2: DAFTAR SEMUA SKU (PUBLIC - TANPA KODE SHOPEE) ---
+# --- TAB 2: DAFTAR SEMUA SKU (PUBLIC) ---
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
     
-    # Hanya panggil kolom sku_code dan display_name
+    # Ambil data dari Supabase
     all_skus = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
 
     if all_skus.data:
-        df_skus = pd.DataFrame(all_skus.data)
-        df_skus = df_skus[['sku_code', 'display_name']]  # Kunci hanya 2 kolom
-        df_skus.rename(columns={'sku_code': 'Kode SKU', 'display_name': 'Nama Etalase'}, inplace=True)
+        # Konstruksi DataFrame murni hanya dengan 2 kolom
+        raw_data = [{"Kode SKU": item["sku_code"], "Nama Etalase": item["display_name"]} for item in all_skus.data]
+        df_skus = pd.DataFrame(raw_data)
         
         filter_text = st.text_input("🔎 Filter daftar (cari kode / etalase):", "").strip()
         if filter_text:
