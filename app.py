@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Paksa bersihkan cache agar data terupdate
+# Paksa bersihkan cache agar data selalu fresh
 st.cache_data.clear()
 
 ADMIN_PASSWORD = "admin123"
@@ -37,29 +37,53 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# --- TAB 1: CARI SKU ---
+# --- TAB 1: CARI SKU (FLEKSIBEL: KODE SKU / NAMA ETALASE / KOMPOSISI) ---
 with tab1:
-    st.write("Cari detail komposisi produk satuan maupun bundling.")
-    query_sku = st.text_input("Masukkan Kode SKU:", "").strip().upper()
+    st.write("Cari berdasarkan **Kode SKU**, **Nama Etalase**, atau **Nama Produk/Komposisi**.")
+    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, Red Jelly, Fruitamin...").strip()
 
-    if query_sku:
-        sku_master = supabase.table("skus").select("sku_code, display_name").eq("sku_code", query_sku).execute()
+    if query_text:
+        # 1. Cari matched SKU dari master skus (berdasarkan kode atau display name)
+        sku_master_res = supabase.table("skus").select("*").or_(f"sku_code.ilike.%{query_text}%,display_name.ilike.%{query_text}%").execute()
         
-        if sku_master.data:
-            data_master = sku_master.data[0]
-            st.success(f"**SKU Ditemukan:** {data_master['sku_code']}")
-            st.write(f"**Nama Etalase:** {data_master['display_name']}")
+        # 2. Cari matched SKU dari tabel components (berdasarkan nama produk komposisi atau child_sku)
+        comp_res = supabase.table("sku_components").select("parent_sku").or_(f"product_name.ilike.%{query_text}%,child_sku.ilike.%{query_text}%").execute()
+        
+        matched_skus = set()
+        if sku_master_res.data:
+            for item in sku_master_res.data:
+                matched_skus.add(item['sku_code'])
+        if comp_res.data:
+            for item in comp_res.data:
+                matched_skus.add(item['parent_sku'])
                 
-            st.markdown("---")
-            st.subheader("📋 Rincian / Komposisi Produk:")
-            components = supabase.table("sku_components").select("qty, product_name, child_sku").eq("parent_sku", query_sku).execute()
+        if matched_skus:
+            # Ambil semua data master untuk SKU yang cocok
+            all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
             
-            if components.data:
-                st.table(components.data)
-            else:
-                st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
+            st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **'{query_text}'**")
+            st.markdown("---")
+            
+            for item in all_matches:
+                sku_code = item['sku_code']
+                display_name = item['display_name']
+                
+                with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
+                    st.write(f"**Kode SKU:** `{sku_code}`")
+                    st.write(f"**Nama Etalase:** {display_name}")
+                    
+                    # Ambil rincian komposisi
+                    comps = supabase.table("sku_components").select("qty, product_name, child_sku").eq("parent_sku", sku_code).execute()
+                    
+                    if comps.data:
+                        st.write("**Rincian / Komposisi Produk:**")
+                        df_comp = pd.DataFrame(comps.data)
+                        df_comp.columns = ["QTY", "Nama Produk", "SKU Satuan"]
+                        st.table(df_comp[["QTY", "SKU Satuan", "Nama Produk"]])
+                    else:
+                        st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
         else:
-            st.error(f"SKU '{query_sku}' tidak ditemukan di database.")
+            st.error(f"Tidak ditemukan data SKU atau produk dengan kata kunci: **'{query_text}'**")
 
 # --- TAB 2: DAFTAR SEMUA SKU ---
 with tab2:
@@ -213,7 +237,6 @@ with tab4:
                 else:
                     st.write("*(Belum ada komponen)*")
                 
-                # TOMBOL AKSI: EDIT DAN HAPUS
                 col_b1, col_b2 = st.columns(2)
                 
                 if f"show_edit_form_{selected_sku}" not in st.session_state:
@@ -231,14 +254,12 @@ with tab4:
                         st.session_state[f"confirm_delete_{selected_sku}"] = True
                         st.session_state[f"show_edit_form_{selected_sku}"] = False
 
-                # KONFIRMASI HAPUS PERMANEN
                 if st.session_state.get(f"confirm_delete_{selected_sku}"):
                     st.warning(f"⚠️ Apakah kamu yakin ingin menghapus SKU **'{selected_sku}'** secara permanen?")
                     c_del1, c_del2 = st.columns(2)
                     with c_del1:
                         if st.button("🔴 Yakin, Hapus Permanen", key=f"btn_yes_delete_{selected_sku}", type="primary", use_container_width=True):
                             try:
-                                # Hapus dari sku_components dulu lalu skus
                                 supabase.table("sku_components").delete().eq("parent_sku", selected_sku).execute()
                                 supabase.table("skus").delete().eq("sku_code", selected_sku).execute()
                                 
@@ -253,7 +274,6 @@ with tab4:
                             st.session_state[f"confirm_delete_{selected_sku}"] = False
                             st.rerun()
 
-                # FORM EDIT
                 if st.session_state.get(f"show_edit_form_{selected_sku}"):
                     st.markdown("---")
                     st.subheader(f"Form Edit SKU: {selected_sku}")
