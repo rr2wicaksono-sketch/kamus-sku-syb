@@ -5,7 +5,6 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-# Paksa bersihkan cache agar data selalu fresh
 st.cache_data.clear()
 
 ADMIN_PASSWORD = "admin123"
@@ -37,28 +36,35 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# --- TAB 1: CARI SKU (FLEKSIBEL: KODE SKU / NAMA ETALASE / KOMPOSISI) ---
+# --- TAB 1: CARI SKU (SMART SEARCH) ---
 with tab1:
     st.write("Cari berdasarkan **Kode SKU**, **Nama Etalase**, atau **Nama Produk/Komposisi**.")
-    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, Red Jelly, Fruitamin...").strip()
+    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB348, Red Jelly, Fruitamin...").strip()
 
     if query_text:
-        # 1. Cari matched SKU dari master skus (berdasarkan kode atau display name)
-        sku_master_res = supabase.table("skus").select("*").or_(f"sku_code.ilike.%{query_text}%,display_name.ilike.%{query_text}%").execute()
+        query_upper = query_text.upper()
         
-        # 2. Cari matched SKU dari tabel components (berdasarkan nama produk komposisi atau child_sku)
-        comp_res = supabase.table("sku_components").select("parent_sku").or_(f"product_name.ilike.%{query_text}%,child_sku.ilike.%{query_text}%").execute()
+        # 1. Cek apakah kata kunci adalah Exact Match Kode SKU Master
+        exact_sku_res = supabase.table("skus").select("*").eq("sku_code", query_upper).execute()
         
         matched_skus = set()
-        if sku_master_res.data:
-            for item in sku_master_res.data:
-                matched_skus.add(item['sku_code'])
-        if comp_res.data:
-            for item in comp_res.data:
-                matched_skus.add(item['parent_sku'])
+        
+        if exact_sku_res.data:
+            # Jika persis kode SKU, kunci HANYA SKU tersebut
+            matched_skus.add(exact_sku_res.data[0]['sku_code'])
+        else:
+            # Jika BUKAN exact kode SKU, cari pencarian umum di nama etalase & komponen
+            sku_master_res = supabase.table("skus").select("sku_code").or_(f"sku_code.ilike.%{query_text}%,display_name.ilike.%{query_text}%").execute()
+            comp_res = supabase.table("sku_components").select("parent_sku").or_(f"product_name.ilike.%{query_text}%,child_sku.ilike.%{query_text}%").execute()
+            
+            if sku_master_res.data:
+                for item in sku_master_res.data:
+                    matched_skus.add(item['sku_code'])
+            if comp_res.data:
+                for item in comp_res.data:
+                    matched_skus.add(item['parent_sku'])
                 
         if matched_skus:
-            # Ambil semua data master untuk SKU yang cocok
             all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
             
             st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **'{query_text}'**")
@@ -72,7 +78,6 @@ with tab1:
                     st.write(f"**Kode SKU:** `{sku_code}`")
                     st.write(f"**Nama Etalase:** {display_name}")
                     
-                    # Ambil rincian komposisi
                     comps = supabase.table("sku_components").select("qty, product_name, child_sku").eq("parent_sku", sku_code).execute()
                     
                     if comps.data:
