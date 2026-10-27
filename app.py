@@ -36,7 +36,7 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# Ambil pilihan produk satuan dari database
+# Ambil pilihan produk satuan (HANYA NAMA PRODUK DI DROPDOWN)
 @st.cache_data(ttl=60)
 def get_satuan_options():
     res = supabase.table("skus").select("sku_code, display_name").like("sku_code", "SYB%").order("display_name").execute()
@@ -44,9 +44,9 @@ def get_satuan_options():
     mapping = {}
     if res.data:
         for item in res.data:
-            label = f"{item['display_name']} ({item['sku_code']})"
-            options.append(label)
-            mapping[label] = {"sku": item['sku_code'], "name": item['display_name']}
+            name_label = item['display_name']
+            options.append(name_label)
+            mapping[name_label] = {"sku": item['sku_code'], "name": item['display_name']}
     return options, mapping
 
 satuan_options, satuan_mapping = get_satuan_options()
@@ -171,6 +171,7 @@ with tab3:
                     st.session_state[f"add_qty_{i}"] = 1
                     st.rerun()
 
+            # Ekstrak SKU dan Nama Produk dari MAPPING
             auto_sku = ""
             auto_name = ""
             if selected_prod in satuan_mapping:
@@ -179,7 +180,6 @@ with tab3:
 
             c1, c2 = st.columns([1, 4])
             with c1:
-                # QTY Diisi Manual
                 p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, step=1, key=f"add_qty_{i}")
             with c2:
                 st.text_input(f"SKU Satuan {i} (Otomatis)", value=auto_sku, disabled=True, key=f"add_sku_dis_{i}")
@@ -325,13 +325,10 @@ with tab4:
                         c_drop_e, c_btn_e = st.columns([5, 1])
                         with c_drop_e:
                             default_idx = 0
-                            ex_sku = existing_comp.get('child_sku') or ""
                             ex_name = existing_comp.get('product_name') or ""
                             
-                            if ex_sku and ex_name:
-                                match_label = f"{ex_name} ({ex_sku})"
-                                if match_label in satuan_options:
-                                    default_idx = satuan_options.index(match_label)
+                            if ex_name and ex_name in satuan_options:
+                                default_idx = satuan_options.index(ex_name)
 
                             selected_edit_prod = st.selectbox(
                                 f"Pilih / Ganti Produk Satuan {i}:", 
@@ -355,7 +352,6 @@ with tab4:
 
                         c1, c2 = st.columns([1, 4])
                         with c1:
-                            # QTY Diisi Manual
                             e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), step=1, key=f"e_qty_{selected_sku}_{i}")
                         with c2:
                             st.text_input(f"SKU Satuan {i} (Otomatis)", value=e_auto_sku, disabled=True, key=f"e_sku_dis_{selected_sku}_{i}")
