@@ -36,11 +36,11 @@ def generate_next_sku(prefix):
     next_num = max_num + 1
     return f"{prefix}{next_num:03d}"
 
-# Fungsi ambil daftar SKU Satuan untuk dropdown
+# Ambil pilihan produk satuan dari database
 @st.cache_data(ttl=60)
 def get_satuan_options():
     res = supabase.table("skus").select("sku_code, display_name").like("sku_code", "SYB%").order("display_name").execute()
-    options = ["-- Pilih Produk Satuan --", "-- Ketik Manual --"]
+    options = ["-- Pilih Produk Satuan --"]
     mapping = {}
     if res.data:
         for item in res.data:
@@ -120,7 +120,7 @@ with tab2:
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# --- TAB 3: TAMBAH SKU BARU (DROPDOWN PRODUK SATUAN) ---
+# --- TAB 3: TAMBAH SKU BARU ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -156,7 +156,6 @@ with tab3:
             is_req = "(Wajib)" if i == 1 else "(Opsional)"
             st.write(f"**Produk {i} {is_req}:**")
             
-            # Row 1: Dropdown & Tombol Kosongkan
             c_drop, c_btn = st.columns([5, 1])
             with c_drop:
                 selected_prod = st.selectbox(
@@ -170,32 +169,27 @@ with tab3:
                 if st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}"):
                     st.session_state[f"add_drop_{i}"] = "-- Pilih Produk Satuan --"
                     st.session_state[f"add_qty_{i}"] = 1
-                    st.session_state[f"add_sku_{i}"] = ""
-                    st.session_state[f"add_name_{i}"] = ""
                     st.rerun()
 
-            # Logika Otomatisasi SKU & Nama Produk dari Dropdown
             auto_sku = ""
             auto_name = ""
             if selected_prod in satuan_mapping:
                 auto_sku = satuan_mapping[selected_prod]["sku"]
                 auto_name = satuan_mapping[selected_prod]["name"]
 
-            # Row 2: Input Detail
-            c1, c2, c3 = st.columns([1, 2, 3])
+            c1, c2 = st.columns([1, 4])
             with c1:
-                p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, key=f"add_qty_{i}")
+                # QTY Diisi Manual
+                p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, step=1, key=f"add_qty_{i}")
             with c2:
-                p_sku = st.text_input(f"SKU Satuan {i}", value=auto_sku, key=f"add_sku_{i}").strip().upper()
-            with c3:
-                p_name = st.text_input(f"Nama Produk {i}", value=auto_name, key=f"add_name_{i}").strip()
+                st.text_input(f"SKU Satuan {i} (Otomatis)", value=auto_sku, disabled=True, key=f"add_sku_dis_{i}")
 
-            items_input.append({'qty': p_qty, 'sku': p_sku, 'name': p_name})
+            items_input.append({'qty': p_qty, 'sku': auto_sku, 'name': auto_name})
             st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
         
         if st.button("💾 Simpan SKU Baru", type="primary", use_container_width=True):
-            if not new_sku or not new_display_name or not items_input[0]['sku'] or not items_input[0]['name']:
-                st.error("Kode SKU Utama, Nama Etalase, serta SKU & Nama Produk 1 WAJIB diisi!")
+            if not new_sku or not new_display_name or not items_input[0]['sku']:
+                st.error("Kode SKU Utama, Nama Etalase, serta Produk 1 WAJIB dipilih!")
             else:
                 try:
                     supabase.table("skus").upsert({
@@ -205,12 +199,12 @@ with tab3:
                     
                     comps = []
                     for item in items_input:
-                        if item['sku'] or item['name']:
+                        if item['sku']:
                             comps.append({
                                 "parent_sku": new_sku,
                                 "qty": item['qty'],
                                 "product_name": item['name'] if item['name'] else item['sku'],
-                                "child_sku": item['sku'] if item['sku'] else None
+                                "child_sku": item['sku']
                             })
                     
                     if comps:
@@ -222,7 +216,7 @@ with tab3:
                 except Exception as e:
                     st.error(f"Gagal menyimpan data: {e}")
 
-# --- TAB 4: EDIT & HAPUS SKU (DROPDOWN PRODUK SATUAN) ---
+# --- TAB 4: EDIT & HAPUS SKU ---
 with tab4:
     st.subheader("✏️ Edit / 🗑️ Hapus SKU")
     
@@ -330,7 +324,6 @@ with tab4:
                         
                         c_drop_e, c_btn_e = st.columns([5, 1])
                         with c_drop_e:
-                            # Tentukan default label jika ada
                             default_idx = 0
                             ex_sku = existing_comp.get('child_sku') or ""
                             ex_name = existing_comp.get('product_name') or ""
@@ -352,25 +345,22 @@ with tab4:
                             if st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}"):
                                 st.session_state[f"edit_drop_{selected_sku}_{i}"] = "-- Pilih Produk Satuan --"
                                 st.session_state[f"e_qty_{selected_sku}_{i}"] = 1
-                                st.session_state[f"e_sku_{selected_sku}_{i}"] = ""
-                                st.session_state[f"e_name_{selected_sku}_{i}"] = ""
                                 st.rerun()
 
-                        e_auto_sku = ex_sku
-                        e_auto_name = ex_name
+                        e_auto_sku = ""
+                        e_auto_name = ""
                         if selected_edit_prod in satuan_mapping:
                             e_auto_sku = satuan_mapping[selected_edit_prod]["sku"]
                             e_auto_name = satuan_mapping[selected_edit_prod]["name"]
 
-                        c1, c2, c3 = st.columns([1, 2, 3])
+                        c1, c2 = st.columns([1, 4])
                         with c1:
-                            e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), key=f"e_qty_{selected_sku}_{i}")
+                            # QTY Diisi Manual
+                            e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), step=1, key=f"e_qty_{selected_sku}_{i}")
                         with c2:
-                            e_sku = st.text_input(f"SKU Satuan {i}", value=e_auto_sku, key=f"e_sku_{selected_sku}_{i}").strip().upper()
-                        with c3:
-                            e_name = st.text_input(f"Nama Produk {i}", value=e_auto_name, key=f"e_name_{selected_sku}_{i}").strip()
+                            st.text_input(f"SKU Satuan {i} (Otomatis)", value=e_auto_sku, disabled=True, key=f"e_sku_dis_{selected_sku}_{i}")
 
-                        edit_items.append({'qty': e_qty, 'sku': e_sku, 'name': e_name})
+                        edit_items.append({'qty': e_qty, 'sku': e_auto_sku, 'name': e_auto_name})
                         st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
                         
                     if st.button("💾 Simpan Perubahan Edit", type="primary", use_container_width=True, key=f"btn_save_edit_{selected_sku}"):
@@ -386,12 +376,12 @@ with tab4:
                                 
                                 new_comps = []
                                 for item in edit_items:
-                                    if item['sku'] or item['name']:
+                                    if item['sku']:
                                         new_comps.append({
                                             "parent_sku": selected_sku,
                                             "qty": item['qty'],
                                             "product_name": item['name'] if item['name'] else item['sku'],
-                                            "child_sku": item['sku'] if item['sku'] else None
+                                            "child_sku": item['sku']
                                         })
                                 
                                 if new_comps:
