@@ -1,138 +1,406 @@
-# 1. Install library yang dibutuhkan di Google Colab
-!pip install supabase openpyxl pandas
-
+import streamlit as st
 import pandas as pd
-from supabase import create_client
-from google.colab import files
+import re
+from supabase import create_client, Client
 
-# 2. Upload file Excel revisi langsung dari komputer
-print("Silakan pilih dan upload file 'NEEE SKU REVISI.xlsx' kamu:")
-uploaded = files.upload()
+st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
-file_path = list(uploaded.keys())[0]
+st.cache_data.clear()
 
-# 3. Konfigurasi Kredensial Supabase
+ADMIN_PASSWORD = "admin123"
+
 SUPABASE_URL = "https://cswevaxdtjnkakppsowx.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzd2V2YXhkdGpua2FrcHBzb3d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NjM2NjQsImV4cCI6MjEwODUzOTY2NH0.iuAcjRRuF20fOhA7X2Z9QPEiEm9I2z4Typb6yLs9Zss"
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+@st.cache_resource
+def init_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -------------------------------------------------------------
-# OLAH DATA SHEET "satuan" & "bundling"
-# -------------------------------------------------------------
-skus_master = []
-components_data = []
+supabase = init_supabase()
 
-# Sheet Satuan
-print("\nMengolah Sheet 'satuan'...")
-df_satuan = pd.read_excel(file_path, sheet_name='satuan')
-for _, row in df_satuan.iterrows():
-    sku_code = str(row['SKU']).strip() if pd.notna(row['SKU']) else None
-    barcode = str(row['Barcode']).strip() if pd.notna(row['Barcode']) else ""
-    product_name = str(row['Produk']).strip() if pd.notna(row['Produk']) else ""
-    
-    if sku_code and sku_code.lower() != 'nan':
-        skus_master.append({
-            "sku_code": sku_code,
-            "display_name": product_name,
-            "barcode": barcode
-        })
-        components_data.append({
-            "parent_sku": sku_code,
-            "qty": 1,
-            "product_name": product_name,
-            "child_sku": sku_code,
-            "barcode": barcode
-        })
+st.title("📦 Kamus & Management SKU SYB")
 
-# Sheet Bundling
-print("Mengolah Sheet 'bundling'...")
-df_bundling = pd.read_excel(file_path, sheet_name='bundling')
-for _, row in df_bundling.iterrows():
-    parent_sku = str(row['SKU']).strip() if pd.notna(row['SKU']) else None
-    display_name = str(row['NAMA ETALASE/VARIASI']).strip() if pd.notna(row['NAMA ETALASE/VARIASI']) else ""
-    variasi = str(row['variasi']).strip() if pd.notna(row['variasi']) else ""
-    
-    if variasi and variasi.lower() != 'nan':
-        display_name = f"{display_name} - {variasi}"
+tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit & Hapus SKU"])
+
+def generate_next_sku(prefix):
+    res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").execute()
+    max_num = 0
+    if res.data:
+        for item in res.data:
+            code = item['sku_code']
+            digits = re.findall(r'\d+', code)
+            if digits:
+                num = int(digits[-1])
+                if num > max_num:
+                    max_num = num
+    next_num = max_num + 1
+    return f"{prefix}{next_num:03d}"
+
+# Ambil pilihan produk satuan dari database
+@st.cache_data(ttl=60)
+def get_satuan_options():
+    res = supabase.table("skus").select("sku_code, display_name, barcode").like("sku_code", "SYB%").order("display_name").execute()
+    options = ["-- Pilih Produk Satuan --"]
+    mapping = {}
+    if res.data:
+        for item in res.data:
+            name_label = item['display_name']
+            options.append(name_label)
+            mapping[name_label] = {"sku": item['sku_code'], "name": item['display_name'], "barcode": item.get('barcode', '')}
+    return options, mapping
+
+satuan_options, satuan_mapping = get_satuan_options()
+
+# --- TAB 1: CARI SKU (SMART SEARCH) ---
+with tab1:
+    st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Nama Etalase**, atau **Nama Produk/Komposisi**.")
+    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, 8 997238 391531, Red Jelly...").strip()
+
+    if query_text:
+        query_upper = query_text.upper()
+        exact_sku_res = supabase.table("skus").select("*").eq("sku_code", query_upper).execute()
         
-    if parent_sku and parent_sku.lower() != 'nan':
-        skus_master.append({
-            "sku_code": parent_sku,
-            "display_name": display_name,
-            "barcode": ""
-        })
-        
-        # Komponen 1
-        qty1 = row['QTY'] if pd.notna(row['QTY']) else 1
-        pname1 = str(row['NAMA PRODUK 1']).strip() if pd.notna(row['NAMA PRODUK 1']) else ""
-        csku1 = str(row['SKU.1']).strip() if pd.notna(row['SKU.1']) else ""
-        bc1 = str(row['barcode']).strip() if pd.notna(row['barcode']) else ""
-        
-        if pname1 or csku1:
-            components_data.append({
-                "parent_sku": parent_sku,
-                "qty": int(qty1) if str(qty1).replace('.','').isdigit() else 1,
-                "product_name": pname1 if pname1 else csku1,
-                "child_sku": csku1 if (csku1 and csku1.lower() != 'nan') else None,
-                "barcode": bc1 if (bc1 and bc1.lower() != 'nan') else ""
-            })
+        matched_skus = set()
+        if exact_sku_res.data:
+            matched_skus.add(exact_sku_res.data[0]['sku_code'])
+        else:
+            sku_master_res = supabase.table("skus").select("sku_code").or_(f"sku_code.ilike.%{query_text}%,display_name.ilike.%{query_text}%,barcode.ilike.%{query_text}%").execute()
+            comp_res = supabase.table("sku_components").select("parent_sku").or_(f"product_name.ilike.%{query_text}%,child_sku.ilike.%{query_text}%,barcode.ilike.%{query_text}%").execute()
             
-        # Komponen 2 s/d 7
-        comp_specs = [
-            ('QTY.1', 'NAMA PRODUK 2', 'SKU.2', 'barcode.1'),
-            ('QTY.2', 'NAMA PRODUK 3', 'SKU.3', 'barcode.2'),
-            ('QTY.3', 'NAMA PRODUK 4', 'SKU.4', 'barcode.3'),
-            ('QTY.4', 'NAMA PRODUK 5', 'SKU.5', None),
-            ('QTY.5', 'NAMA PRODUK 6', 'SKU.6', None),
-            ('QTY.6', 'NAMA PRODUK 7', 'SKU.7', None),
-        ]
-        
-        for q_col, p_col, s_col, b_col in comp_specs:
-            pname = str(row[p_col]).strip() if pd.notna(row[p_col]) else ""
-            csku = str(row[s_col]).strip() if pd.notna(row[s_col]) else ""
-            qval = row[q_col] if pd.notna(row[q_col]) else 1
-            bc = str(row[b_col]).strip() if (b_col and pd.notna(row[b_col])) else ""
+            if sku_master_res.data:
+                for item in sku_master_res.data:
+                    matched_skus.add(item['sku_code'])
+            if comp_res.data:
+                for item in comp_res.data:
+                    matched_skus.add(item['parent_sku'])
+                
+        if matched_skus:
+            all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
             
-            if pname or csku:
-                components_data.append({
-                    "parent_sku": parent_sku,
-                    "qty": int(qval) if str(qval).replace('.','').isdigit() else 1,
-                    "product_name": pname if pname else csku,
-                    "child_sku": csku if (csku and csku.lower() != 'nan') else None,
-                    "barcode": bc if (bc and bc.lower() != 'nan') else ""
-                })
+            st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **'{query_text}'**")
+            st.markdown("---")
+            
+            for item in all_matches:
+                sku_code = item['sku_code']
+                display_name = item['display_name']
+                barcode_master = item.get('barcode') or "-"
+                
+                with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
+                    st.write(f"**Kode SKU:** `{sku_code}`")
+                    if barcode_master != "-":
+                        st.write(f"**Barcode Master:** `{barcode_master}`")
+                    st.write(f"**Nama Etalase:** {display_name}")
+                    
+                    comps = supabase.table("sku_components").select("qty, product_name, child_sku, barcode").eq("parent_sku", sku_code).execute()
+                    
+                    if comps.data:
+                        st.write("**Rincian / Komposisi Produk:**")
+                        df_comp = pd.DataFrame(comps.data)
+                        df_comp.columns = ["QTY", "Nama Produk", "SKU Satuan", "Barcode"]
+                        st.table(df_comp[["QTY", "SKU Satuan", "Barcode", "Nama Produk"]])
+                    else:
+                        st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
+        else:
+            st.error(f"Tidak ditemukan data SKU atau produk dengan kata kunci: **'{query_text}'**")
 
-# -------------------------------------------------------------
-# KOSONGKAN DATABASE LAMA & UPLOAD DATA REVISI
-# -------------------------------------------------------------
-print("\n1. Mengosongkan seluruh database Supabase lama...")
-while True:
-    res_skus = supabase.table("skus").select("sku_code").limit(1000).execute()
-    if not res_skus.data:
-        break
-    all_codes = [item['sku_code'] for item in res_skus.data]
-    for i in range(0, len(all_codes), 100):
-        batch = all_codes[i:i + 100]
-        supabase.table("sku_components").delete().in_("parent_sku", batch).execute()
-        supabase.table("skus").delete().in_("sku_code", batch).execute()
+# --- TAB 2: DAFTAR SEMUA SKU ---
+with tab2:
+    st.subheader("📖 Dictionary Semua SKU")
+    
+    all_skus = supabase.table("skus").select("sku_code, display_name, barcode").order("sku_code").execute()
 
-print("   -> Supabase berhasil dikosongkan total!")
+    if all_skus.data:
+        raw_data = [{"Kode SKU": item["sku_code"], "Barcode": item.get("barcode", "-"), "Nama Etalase": item["display_name"]} for item in all_skus.data]
+        df_skus = pd.DataFrame(raw_data)
+        
+        filter_text = st.text_input("🔎 Filter daftar (cari kode / barcode / etalase):", "").strip()
+        if filter_text:
+            df_filt = df_skus[
+                df_skus['Kode SKU'].str.contains(filter_text, case=False, na=False) |
+                df_skus['Barcode'].str.contains(filter_text, case=False, na=False) |
+                df_skus['Nama Etalase'].str.contains(filter_text, case=False, na=False)
+            ]
+            st.dataframe(df_filt, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# Deduplikasi ketat
-df_master_unique = pd.DataFrame(skus_master).drop_duplicates(subset=['sku_code']).to_dict('records')
-df_comp = pd.DataFrame(components_data)
-df_comp_clean = df_comp.drop_duplicates(subset=['parent_sku', 'product_name']).to_dict('records')
+# --- TAB 3: TAMBAH SKU BARU ---
+with tab3:
+    st.subheader("➕ Input SKU Master / Bundling Baru")
+    
+    if "auth_tab3" not in st.session_state:
+        st.session_state.auth_tab3 = False
 
-print(f"\n2. Mengunggah {len(df_master_unique)} Master SKU ke tabel 'skus'...")
-batch_size = 500
-for i in range(0, len(df_master_unique), batch_size):
-    batch = df_master_unique[i:i + batch_size]
-    supabase.table("skus").upsert(batch).execute()
+    if not st.session_state.auth_tab3:
+        st.warning("🔒 Khusus Admin: Masukkan password untuk membuka form tambah SKU.")
+        pwd_t3 = st.text_input("Password Admin (Tambah SKU):", type="password", key="pwd_tab3")
+        if st.button("Buka Form Tambah SKU", key="btn_auth_tab3"):
+            if pwd_t3 == ADMIN_PASSWORD:
+                st.session_state.auth_tab3 = True
+                st.success("Akses diterima!")
+                st.rerun()
+            else:
+                st.error("Password salah!")
+    else:
+        st.success("🔓 Akses Admin Aktif (Tambah SKU)")
+        sku_type = st.radio("Pilih Tipe SKU:", ["Bundling (BSYB)", "Satuan (SYB)"], horizontal=True)
+        prefix = "BSYB" if "Bundling" in sku_type else "SYB"
+        
+        suggested_sku = generate_next_sku(prefix)
+        
+        st.info(f"Saran Kode SKU Otomatis Selanjutnya: **{suggested_sku}**")
+        new_sku = st.text_input("Kode SKU Utama*", value=suggested_sku, key="add_master_sku").strip().upper()
+        new_display_name = st.text_input("Nama Etalase / Produk*", key="add_master_name").strip()
+        new_barcode = st.text_input("Barcode Master (Opsional)", key="add_master_barcode").strip()
+        
+        st.markdown("---")
+        st.subheader("📦 Komposisi Produk Bundling (Max 7 Item)")
+        
+        items_input = []
+        for i in range(1, 8):
+            is_req = "(Wajib)" if i == 1 else "(Opsional)"
+            st.write(f"**Produk {i} {is_req}:**")
+            
+            c_drop, c_btn = st.columns([5, 1])
+            with c_drop:
+                selected_prod = st.selectbox(
+                    f"Pilih Produk Satuan {i} dari Database:", 
+                    satuan_options, 
+                    key=f"add_drop_{i}"
+                )
+            with c_btn:
+                st.write(" ")
+                st.write(" ")
+                if st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}"):
+                    st.session_state[f"add_drop_{i}"] = "-- Pilih Produk Satuan --"
+                    st.session_state[f"add_qty_{i}"] = 1
+                    st.rerun()
 
-print(f"3. Mengunggah {len(df_comp_clean)} Komposisi Produk ke tabel 'sku_components'...")
-for i in range(0, len(df_comp_clean), batch_size):
-    batch = df_comp_clean[i:i + batch_size]
-    supabase.table("sku_components").insert(batch).execute()
+            auto_sku = ""
+            auto_name = ""
+            auto_bc = ""
+            if selected_prod in satuan_mapping:
+                auto_sku = satuan_mapping[selected_prod]["sku"]
+                auto_name = satuan_mapping[selected_prod]["name"]
+                auto_bc = satuan_mapping[selected_prod]["barcode"]
 
-print("\n✅ SELESAI! Database Supabase berhasil di-reset & di-update ke versi revisi terbaru.")
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, step=1, key=f"add_qty_{i}")
+            with c2:
+                st.text_input(f"SKU Satuan {i} (Otomatis)", value=auto_sku, disabled=True, key=f"add_sku_dis_{i}")
+
+            items_input.append({'qty': p_qty, 'sku': auto_sku, 'name': auto_name, 'barcode': auto_bc})
+            st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+        
+        if st.button("💾 Simpan SKU Baru", type="primary", use_container_width=True):
+            if not new_sku or not new_display_name or not items_input[0]['sku']:
+                st.error("Kode SKU Utama, Nama Etalase, serta Produk 1 WAJIB dipilih!")
+            else:
+                try:
+                    supabase.table("skus").upsert({
+                        "sku_code": new_sku,
+                        "display_name": new_display_name,
+                        "barcode": new_barcode
+                    }).execute()
+                    
+                    comps = []
+                    for item in items_input:
+                        if item['sku']:
+                            comps.append({
+                                "parent_sku": new_sku,
+                                "qty": item['qty'],
+                                "product_name": item['name'] if item['name'] else item['sku'],
+                                "child_sku": item['sku'],
+                                "barcode": item['barcode']
+                            })
+                    
+                    if comps:
+                        supabase.table("sku_components").insert(comps).execute()
+                    
+                    st.success(f"Berhasil menyimpan SKU '{new_sku}'!")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal menyimpan data: {e}")
+
+# --- TAB 4: EDIT & HAPUS SKU ---
+with tab4:
+    st.subheader("✏️ Edit / 🗑️ Hapus SKU")
+    
+    if "auth_tab4" not in st.session_state:
+        st.session_state.auth_tab4 = False
+
+    if not st.session_state.auth_tab4:
+        st.warning("🔒 Khusus Admin: Masukkan password untuk mengedit / menghapus SKU.")
+        pwd_t4 = st.text_input("Password Admin (Edit/Hapus SKU):", type="password", key="pwd_tab4")
+        if st.button("Buka Akses Edit & Hapus SKU", key="btn_auth_tab4"):
+            if pwd_t4 == ADMIN_PASSWORD:
+                st.session_state.auth_tab4 = True
+                st.success("Akses diterima!")
+                st.rerun()
+            else:
+                st.error("Password salah!")
+    else:
+        st.success("🔓 Akses Admin Aktif (Edit & Hapus SKU)")
+        search_method = st.radio("Metode Cari SKU yang Mau Diolah:", ["Pilih dari Dropdown List", "Ketik Kode SKU"], horizontal=True)
+        
+        selected_sku = None
+        
+        if search_method == "Pilih dari Dropdown List":
+            all_skus_list = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
+            if all_skus_list.data:
+                sku_options = ["-- Pilih SKU --"] + [f"{item['sku_code']} - {item['display_name']}" for item in all_skus_list.data]
+                choice = st.selectbox("Daftar SKU Terdaftar:", sku_options)
+                if choice != "-- Pilih SKU --":
+                    selected_sku = choice.split(" - ")[0]
+        else:
+            typed_sku = st.text_input("Ketik Kode SKU (misal: BSYB005 atau SYB001):", "").strip().upper()
+            if typed_sku:
+                selected_sku = typed_sku
+
+        if selected_sku:
+            st.markdown("---")
+            sku_res = supabase.table("skus").select("sku_code, display_name, barcode").eq("sku_code", selected_sku).execute()
+            
+            if not sku_res.data:
+                st.error(f"SKU '{selected_sku}' tidak ditemukan di database.")
+            else:
+                sku_info = sku_res.data[0]
+                comps_info = supabase.table("sku_components").select("*").eq("parent_sku", selected_sku).execute().data
+                
+                st.info(f"📌 **Detail SKU Terpilih:** {sku_info['sku_code']}")
+                st.write(f"**Nama Etalase:** {sku_info['display_name']}")
+                if sku_info.get('barcode'):
+                    st.write(f"**Barcode:** {sku_info['barcode']}")
+                
+                st.write("**Komposisi Produk Eksisting:**")
+                if comps_info:
+                    st.table(pd.DataFrame(comps_info)[['qty', 'product_name', 'child_sku', 'barcode']])
+                else:
+                    st.write("*(Belum ada komponen)*")
+                
+                col_b1, col_b2 = st.columns(2)
+                
+                if f"show_edit_form_{selected_sku}" not in st.session_state:
+                    st.session_state[f"show_edit_form_{selected_sku}"] = False
+                if f"confirm_delete_{selected_sku}" not in st.session_state:
+                    st.session_state[f"confirm_delete_{selected_sku}"] = False
+
+                with col_b1:
+                    if st.button("✏️ Edit SKU Ini", key=f"btn_open_edit_{selected_sku}", use_container_width=True):
+                        st.session_state[f"show_edit_form_{selected_sku}"] = True
+                        st.session_state[f"confirm_delete_{selected_sku}"] = False
+
+                with col_b2:
+                    if st.button("🗑️ Hapus SKU Ini", key=f"btn_open_del_{selected_sku}", type="secondary", use_container_width=True):
+                        st.session_state[f"confirm_delete_{selected_sku}"] = True
+                        st.session_state[f"show_edit_form_{selected_sku}"] = False
+
+                if st.session_state.get(f"confirm_delete_{selected_sku}"):
+                    st.warning(f"⚠️ Apakah kamu yakin ingin menghapus SKU **'{selected_sku}'** secara permanen?")
+                    c_del1, c_del2 = st.columns(2)
+                    with c_del1:
+                        if st.button("🔴 Yakin, Hapus Permanen", key=f"btn_yes_delete_{selected_sku}", type="primary", use_container_width=True):
+                            try:
+                                supabase.table("sku_components").delete().eq("parent_sku", selected_sku).execute()
+                                supabase.table("skus").delete().eq("sku_code", selected_sku).execute()
+                                
+                                st.success(f"Berhasil menghapus SKU '{selected_sku}' dari database!")
+                                st.cache_data.clear()
+                                st.session_state[f"confirm_delete_{selected_sku}"] = False
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Gagal menghapus SKU: {e}")
+                    with c_del2:
+                        if st.button("❌ Batal Hapus", key=f"btn_cancel_delete_{selected_sku}", use_container_width=True):
+                            st.session_state[f"confirm_delete_{selected_sku}"] = False
+                            st.rerun()
+
+                if st.session_state.get(f"show_edit_form_{selected_sku}"):
+                    st.markdown("---")
+                    st.subheader(f"Form Edit SKU: {selected_sku}")
+                    
+                    edit_display_name = st.text_input("Nama Etalase / Produk*", value=sku_info.get('display_name') or "", key=f"edit_disp_{selected_sku}")
+                    edit_barcode = st.text_input("Barcode Master", value=sku_info.get('barcode') or "", key=f"edit_bc_{selected_sku}")
+                    
+                    st.markdown("---")
+                    st.write("**Edit Komposisi Produk (1 s/d 7):**")
+                    
+                    edit_items = []
+                    for i in range(1, 8):
+                        existing_comp = comps_info[i-1] if i <= len(comps_info) else {}
+                        
+                        st.write(f"**Produk {i}:**")
+                        
+                        c_drop_e, c_btn_e = st.columns([5, 1])
+                        with c_drop_e:
+                            default_idx = 0
+                            ex_name = existing_comp.get('product_name') or ""
+                            
+                            if ex_name and ex_name in satuan_options:
+                                default_idx = satuan_options.index(ex_name)
+
+                            selected_edit_prod = st.selectbox(
+                                f"Pilih / Ganti Produk Satuan {i}:", 
+                                satuan_options, 
+                                index=default_idx,
+                                key=f"edit_drop_{selected_sku}_{i}"
+                            )
+                        with c_btn_e:
+                            st.write(" ")
+                            st.write(" ")
+                            if st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}"):
+                                st.session_state[f"edit_drop_{selected_sku}_{i}"] = "-- Pilih Produk Satuan --"
+                                st.session_state[f"e_qty_{selected_sku}_{i}"] = 1
+                                st.rerun()
+
+                        e_auto_sku = ""
+                        e_auto_name = ""
+                        e_auto_bc = ""
+                        if selected_edit_prod in satuan_mapping:
+                            e_auto_sku = satuan_mapping[selected_edit_prod]["sku"]
+                            e_auto_name = satuan_mapping[selected_edit_prod]["name"]
+                            e_auto_bc = satuan_mapping[selected_edit_prod]["barcode"]
+
+                        c1, c2 = st.columns([1, 4])
+                        with c1:
+                            e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), step=1, key=f"e_qty_{selected_sku}_{i}")
+                        with c2:
+                            st.text_input(f"SKU Satuan {i} (Otomatis)", value=e_auto_sku, disabled=True, key=f"e_sku_dis_{selected_sku}_{i}")
+
+                        edit_items.append({'qty': e_qty, 'sku': e_auto_sku, 'name': e_auto_name, 'barcode': e_auto_bc})
+                        st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+                        
+                    if st.button("💾 Simpan Perubahan Edit", type="primary", use_container_width=True, key=f"btn_save_edit_{selected_sku}"):
+                        if not edit_display_name:
+                            st.error("Nama Etalase tidak boleh kosong!")
+                        else:
+                            try:
+                                supabase.table("skus").update({
+                                    "display_name": edit_display_name,
+                                    "barcode": edit_barcode
+                                }).eq("sku_code", selected_sku).execute()
+                                
+                                supabase.table("sku_components").delete().eq("parent_sku", selected_sku).execute()
+                                
+                                new_comps = []
+                                for item in edit_items:
+                                    if item['sku']:
+                                        new_comps.append({
+                                            "parent_sku": selected_sku,
+                                            "qty": item['qty'],
+                                            "product_name": item['name'] if item['name'] else item['sku'],
+                                            "child_sku": item['sku'],
+                                            "barcode": item['barcode']
+                                        })
+                                
+                                if new_comps:
+                                    supabase.table("sku_components").insert(new_comps).execute()
+                                    
+                                st.success(f"Berhasil memperbarui SKU '{selected_sku}'!")
+                                st.cache_data.clear()
+                                st.session_state[f"show_edit_form_{selected_sku}"] = False
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Gagal memperbarui data: {e}")
