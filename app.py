@@ -26,7 +26,7 @@ def generate_next_sku(prefix):
     res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").limit(5000).execute()
     
     used_numbers = set()
-    pad_length = 3 if prefix == "SYB" else 2  # SYB001 (3 digit), BPO01 (2 digit atau menyesuaikan)
+    pad_length = 3 if prefix == "SYB" else 2
     
     if res.data:
         for item in res.data:
@@ -72,7 +72,7 @@ def get_satuan_options():
 
 satuan_options, satuan_mapping = get_satuan_options()
 
-# --- TAB 1: CARI SKU (SMART SEARCH) ---
+# --- TAB 1: CARI SKU (SMART SEARCH DENGAN KOTAK SCROLL) ---
 with tab1:
     st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Variasi**, atau **Isi / Nama Produk**.")
     query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, BPO01, AHA250, Red Jelly...").strip()
@@ -99,28 +99,29 @@ with tab1:
             all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
             
             st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **'{query_text}'**")
-            st.markdown("---")
             
-            for item in all_matches:
-                sku_code = item['sku_code']
-                display_name = item['display_name']
-                barcode_master = item.get('barcode') or "-"
-                
-                with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
-                    st.write(f"**Kode SKU:** `{sku_code}`")
-                    if barcode_master != "-":
-                        st.write(f"**Barcode Master:** `{barcode_master}`")
-                    st.write(f"**Variasi / Isi Produk:** {display_name}")
+            # Kotak Scroll Khusus Hasil Pencarian (Header & Input Pencarian di atas tetap diam)
+            with st.container(height=480, border=True):
+                for item in all_matches:
+                    sku_code = item['sku_code']
+                    display_name = item['display_name']
+                    barcode_master = item.get('barcode') or "-"
                     
-                    comps = supabase.table("sku_components").select("qty, product_name, child_sku, barcode").eq("parent_sku", sku_code).execute()
-                    
-                    if comps.data:
-                        st.write("**Rincian / Komposisi Produk:**")
-                        df_comp = pd.DataFrame(comps.data)
-                        df_comp.columns = ["QTY", "Nama Produk", "SKU Satuan", "Barcode"]
-                        st.table(df_comp[["QTY", "SKU Satuan", "Barcode", "Nama Produk"]])
-                    else:
-                        st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
+                    with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
+                        st.write(f"**Kode SKU:** `{sku_code}`")
+                        if barcode_master != "-":
+                            st.write(f"**Barcode Master:** `{barcode_master}`")
+                        st.write(f"**Variasi / Isi Produk:** {display_name}")
+                        
+                        comps = supabase.table("sku_components").select("qty, product_name, child_sku, barcode").eq("parent_sku", sku_code).execute()
+                        
+                        if comps.data:
+                            st.write("**Rincian / Komposisi Produk:**")
+                            df_comp = pd.DataFrame(comps.data)
+                            df_comp.columns = ["QTY", "Nama Produk", "SKU Satuan", "Barcode"]
+                            st.table(df_comp[["QTY", "SKU Satuan", "Barcode", "Nama Produk"]])
+                        else:
+                            st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
         else:
             st.error(f"Tidak ditemukan data SKU atau produk dengan kata kunci: **'{query_text}'**")
 
@@ -141,9 +142,9 @@ with tab2:
                 df_skus['Barcode'].str.contains(filter_text, case=False, na=False) |
                 df_skus['Variasi / Isi Produk'].str.contains(filter_text, case=False, na=False)
             ]
-            st.dataframe(df_filt, use_container_width=True, hide_index=True)
+            st.dataframe(df_filt, use_container_width=True, hide_index=True, height=480)
         else:
-            st.dataframe(df_skus, use_container_width=True, hide_index=True)
+            st.dataframe(df_skus, use_container_width=True, hide_index=True, height=480)
 
 # --- TAB 3: TAMBAH SKU BARU (AUTO-FILL URUTAN KOSONG & ISI PRODUK) ---
 with tab3:
@@ -178,43 +179,43 @@ with tab3:
         st.subheader("📦 Komposisi Produk (Max 7 Item)")
         
         items_input = []
-        for i in range(1, 8):
-            is_req = "(Wajib)" if i == 1 else "(Opsional)"
-            st.write(f"**Produk {i} {is_req}:**")
-            
-            c_drop, c_btn = st.columns([5, 1])
-            with c_drop:
-                selected_prod = st.selectbox(
-                    f"Pilih Produk Satuan {i} dari Database:", 
-                    satuan_options, 
-                    key=f"add_drop_{i}"
-                )
-            with c_btn:
-                st.write(" ")
-                st.write(" ")
-                if st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}"):
-                    st.session_state[f"add_drop_{i}"] = "-- Pilih Produk Satuan --"
-                    st.session_state[f"add_qty_{i}"] = 1
-                    st.rerun()
+        with st.container(height=420, border=True):
+            for i in range(1, 8):
+                is_req = "(Wajib)" if i == 1 else "(Opsional)"
+                st.write(f"**Produk {i} {is_req}:**")
+                
+                c_drop, c_btn = st.columns([5, 1])
+                with c_drop:
+                    selected_prod = st.selectbox(
+                        f"Pilih Produk Satuan {i} dari Database:", 
+                        satuan_options, 
+                        key=f"add_drop_{i}"
+                    )
+                with c_btn:
+                    st.write(" ")
+                    st.write(" ")
+                    if st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}"):
+                        st.session_state[f"add_drop_{i}"] = "-- Pilih Produk Satuan --"
+                        st.session_state[f"add_qty_{i}"] = 1
+                        st.rerun()
 
-            auto_sku = ""
-            auto_name = ""
-            auto_bc = ""
-            if selected_prod in satuan_mapping:
-                auto_sku = satuan_mapping[selected_prod]["sku"]
-                auto_name = satuan_mapping[selected_prod]["name"]
-                auto_bc = satuan_mapping[selected_prod]["barcode"]
+                auto_sku = ""
+                auto_name = ""
+                auto_bc = ""
+                if selected_prod in satuan_mapping:
+                    auto_sku = satuan_mapping[selected_prod]["sku"]
+                    auto_name = satuan_mapping[selected_prod]["name"]
+                    auto_bc = satuan_mapping[selected_prod]["barcode"]
 
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, step=1, key=f"add_qty_{i}")
-            with c2:
-                st.text_input(f"SKU Satuan {i} (Otomatis)", value=auto_sku, disabled=True, key=f"add_sku_dis_{i}")
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    p_qty = st.number_input(f"QTY {i}", min_value=1, value=1, step=1, key=f"add_qty_{i}")
+                with c2:
+                    st.text_input(f"SKU Satuan {i} (Otomatis)", value=auto_sku, disabled=True, key=f"add_sku_dis_{i}")
 
-            items_input.append({'qty': p_qty, 'sku': auto_sku, 'name': auto_name, 'barcode': auto_bc})
-            st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+                items_input.append({'qty': p_qty, 'sku': auto_sku, 'name': auto_name, 'barcode': auto_bc})
+                st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
         
-        # Preview format ISI PRODUK otomatis
         auto_isi_produk = format_isi_produk(items_input)
         if auto_isi_produk:
             st.caption(f"Preview Kolom ISI PRODUK: **{auto_isi_produk}**")
@@ -361,49 +362,50 @@ with tab4:
                     st.write("**Edit Komposisi Produk (1 s/d 7):**")
                     
                     edit_items = []
-                    for i in range(1, 8):
-                        existing_comp = comps_info[i-1] if i <= len(comps_info) else {}
-                        
-                        st.write(f"**Produk {i}:**")
-                        
-                        c_drop_e, c_btn_e = st.columns([5, 1])
-                        with c_drop_e:
-                            default_idx = 0
-                            ex_name = existing_comp.get('product_name') or ""
+                    with st.container(height=420, border=True):
+                        for i in range(1, 8):
+                            existing_comp = comps_info[i-1] if i <= len(comps_info) else {}
                             
-                            if ex_name and ex_name in satuan_options:
-                                default_idx = satuan_options.index(ex_name)
+                            st.write(f"**Produk {i}:**")
+                            
+                            c_drop_e, c_btn_e = st.columns([5, 1])
+                            with c_drop_e:
+                                default_idx = 0
+                                ex_name = existing_comp.get('product_name') or ""
+                                
+                                if ex_name and ex_name in satuan_options:
+                                    default_idx = satuan_options.index(ex_name)
 
-                            selected_edit_prod = st.selectbox(
-                                f"Pilih / Ganti Produk Satuan {i}:", 
-                                satuan_options, 
-                                index=default_idx,
-                                key=f"edit_drop_{selected_sku}_{i}"
-                            )
-                        with c_btn_e:
-                            st.write(" ")
-                            st.write(" ")
-                            if st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}"):
-                                st.session_state[f"edit_drop_{selected_sku}_{i}"] = "-- Pilih Produk Satuan --"
-                                st.session_state[f"e_qty_{selected_sku}_{i}"] = 1
-                                st.rerun()
+                                selected_edit_prod = st.selectbox(
+                                    f"Pilih / Ganti Produk Satuan {i}:", 
+                                    satuan_options, 
+                                    index=default_idx,
+                                    key=f"edit_drop_{selected_sku}_{i}"
+                                )
+                            with c_btn_e:
+                                st.write(" ")
+                                st.write(" ")
+                                if st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}"):
+                                    st.session_state[f"edit_drop_{selected_sku}_{i}"] = "-- Pilih Produk Satuan --"
+                                    st.session_state[f"e_qty_{selected_sku}_{i}"] = 1
+                                    st.rerun()
 
-                        e_auto_sku = ""
-                        e_auto_name = ""
-                        e_auto_bc = ""
-                        if selected_edit_prod in satuan_mapping:
-                            e_auto_sku = satuan_mapping[selected_edit_prod]["sku"]
-                            e_auto_name = satuan_mapping[selected_edit_prod]["name"]
-                            e_auto_bc = satuan_mapping[selected_edit_prod]["barcode"]
+                            e_auto_sku = ""
+                            e_auto_name = ""
+                            e_auto_bc = ""
+                            if selected_edit_prod in satuan_mapping:
+                                e_auto_sku = satuan_mapping[selected_edit_prod]["sku"]
+                                e_auto_name = satuan_mapping[selected_edit_prod]["name"]
+                                e_auto_bc = satuan_mapping[selected_edit_prod]["barcode"]
 
-                        c1, c2 = st.columns([1, 4])
-                        with c1:
-                            e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), step=1, key=f"e_qty_{selected_sku}_{i}")
-                        with c2:
-                            st.text_input(f"SKU Satuan {i} (Otomatis)", value=e_auto_sku, disabled=True, key=f"e_sku_dis_{selected_sku}_{i}")
+                            c1, c2 = st.columns([1, 4])
+                            with c1:
+                                e_qty = st.number_input(f"QTY {i}", min_value=1, value=int(existing_comp.get('qty', 1)), step=1, key=f"e_qty_{selected_sku}_{i}")
+                            with c2:
+                                st.text_input(f"SKU Satuan {i} (Otomatis)", value=e_auto_sku, disabled=True, key=f"e_sku_dis_{selected_sku}_{i}")
 
-                        edit_items.append({'qty': e_qty, 'sku': e_auto_sku, 'name': e_auto_name, 'barcode': e_auto_bc})
-                        st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+                            edit_items.append({'qty': e_qty, 'sku': e_auto_sku, 'name': e_auto_name, 'barcode': e_auto_bc})
+                            st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
                         
                     if st.button("💾 Simpan Perubahan Edit", type="primary", use_container_width=True, key=f"btn_save_edit_{selected_sku}"):
                         if not edit_display_name:
