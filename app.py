@@ -23,38 +23,59 @@ st.title("📦 Kamus & Management SKU SYB")
 tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit & Hapus SKU"])
 
 def generate_next_sku(prefix):
-    res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").execute()
-    max_num = 0
+    res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").limit(5000).execute()
+    
+    used_numbers = set()
+    pad_length = 3 if prefix == "SYB" else 2  # SYB001 (3 digit), BPO01 (2 digit atau menyesuaikan)
+    
     if res.data:
         for item in res.data:
-            code = item['sku_code']
-            digits = re.findall(r'\d+', code)
-            if digits:
-                num = int(digits[-1])
-                if num > max_num:
-                    max_num = num
-    next_num = max_num + 1
-    return f"{prefix}{next_num:03d}"
+            code = item['sku_code'].strip().upper()
+            match = re.fullmatch(rf"{re.escape(prefix)}(\d+)", code)
+            if match:
+                num_str = match.group(1)
+                used_numbers.add(int(num_str))
+                if len(num_str) > pad_length:
+                    pad_length = len(num_str)
+    
+    candidate = 1
+    while candidate in used_numbers:
+        candidate += 1
+        
+    return f"{prefix}{candidate:0{pad_length}d}"
 
-# Ambil pilihan produk satuan dari database
+def format_isi_produk(items):
+    parts = []
+    for item in items:
+        if item.get('sku') or item.get('name'):
+            qty = int(item.get('qty', 1))
+            unit = "pc" if qty == 1 else "pcs"
+            name = item.get('name') or item.get('sku')
+            parts.append(f"{qty} {unit} , {name}")
+    return " + ".join(parts)
+
 @st.cache_data(ttl=60)
 def get_satuan_options():
-    res = supabase.table("skus").select("sku_code, display_name, barcode").like("sku_code", "SYB%").order("display_name").execute()
+    res = supabase.table("skus").select("sku_code, display_name, barcode").like("sku_code", "SYB%").order("display_name").limit(5000).execute()
     options = ["-- Pilih Produk Satuan --"]
     mapping = {}
     if res.data:
         for item in res.data:
             name_label = item['display_name']
             options.append(name_label)
-            mapping[name_label] = {"sku": item['sku_code'], "name": item['display_name'], "barcode": item.get('barcode', '')}
+            mapping[name_label] = {
+                "sku": item['sku_code'], 
+                "name": item['display_name'], 
+                "barcode": item.get('barcode', '')
+            }
     return options, mapping
 
 satuan_options, satuan_mapping = get_satuan_options()
 
 # --- TAB 1: CARI SKU (SMART SEARCH) ---
 with tab1:
-    st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Nama Etalase**, atau **Nama Produk/Komposisi**.")
-    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, 8 997238 391531, Red Jelly...").strip()
+    st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Variasi**, atau **Isi / Nama Produk**.")
+    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, BPO01, AHA250, Red Jelly...").strip()
 
     if query_text:
         query_upper = query_text.upper()
@@ -89,7 +110,7 @@ with tab1:
                     st.write(f"**Kode SKU:** `{sku_code}`")
                     if barcode_master != "-":
                         st.write(f"**Barcode Master:** `{barcode_master}`")
-                    st.write(f"**Nama Etalase:** {display_name}")
+                    st.write(f"**Variasi / Isi Produk:** {display_name}")
                     
                     comps = supabase.table("sku_components").select("qty, product_name, child_sku, barcode").eq("parent_sku", sku_code).execute()
                     
@@ -107,24 +128,24 @@ with tab1:
 with tab2:
     st.subheader("📖 Dictionary Semua SKU")
     
-    all_skus = supabase.table("skus").select("sku_code, display_name, barcode").order("sku_code").execute()
+    all_skus = supabase.table("skus").select("sku_code, display_name, barcode").order("sku_code").limit(5000).execute()
 
     if all_skus.data:
-        raw_data = [{"Kode SKU": item["sku_code"], "Barcode": item.get("barcode", "-"), "Nama Etalase": item["display_name"]} for item in all_skus.data]
+        raw_data = [{"Kode SKU": item["sku_code"], "Barcode": item.get("barcode") or "-", "Variasi / Isi Produk": item["display_name"]} for item in all_skus.data]
         df_skus = pd.DataFrame(raw_data)
         
-        filter_text = st.text_input("🔎 Filter daftar (cari kode / barcode / etalase):", "").strip()
+        filter_text = st.text_input("🔎 Filter daftar (cari kode / barcode / variasi / isi produk):", "").strip()
         if filter_text:
             df_filt = df_skus[
                 df_skus['Kode SKU'].str.contains(filter_text, case=False, na=False) |
                 df_skus['Barcode'].str.contains(filter_text, case=False, na=False) |
-                df_skus['Nama Etalase'].str.contains(filter_text, case=False, na=False)
+                df_skus['Variasi / Isi Produk'].str.contains(filter_text, case=False, na=False)
             ]
             st.dataframe(df_filt, use_container_width=True, hide_index=True)
         else:
             st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
-# --- TAB 3: TAMBAH SKU BARU ---
+# --- TAB 3: TAMBAH SKU BARU (AUTO-FILL URUTAN KOSONG & ISI PRODUK) ---
 with tab3:
     st.subheader("➕ Input SKU Master / Bundling Baru")
     
@@ -143,18 +164,18 @@ with tab3:
                 st.error("Password salah!")
     else:
         st.success("🔓 Akses Admin Aktif (Tambah SKU)")
-        sku_type = st.radio("Pilih Tipe SKU:", ["Bundling (BSYB)", "Satuan (SYB)"], horizontal=True)
-        prefix = "BSYB" if "Bundling" in sku_type else "SYB"
+        sku_type = st.radio("Pilih Tipe SKU:", ["Bundling (BPO)", "Satuan (SYB)"], horizontal=True)
+        prefix = "BPO" if "Bundling" in sku_type else "SYB"
         
         suggested_sku = generate_next_sku(prefix)
         
-        st.info(f"Saran Kode SKU Otomatis Selanjutnya: **{suggested_sku}**")
-        new_sku = st.text_input("Kode SKU Utama*", value=suggested_sku, key="add_master_sku").strip().upper()
-        new_display_name = st.text_input("Nama Etalase / Produk*", key="add_master_name").strip()
+        st.info(f"Saran Kode SKU Otomatis (Mengisi Urutan Kosong / Terbaru): **{suggested_sku}**")
+        new_sku = st.text_input("Kode SKU Utama*", value=suggested_sku, key=f"add_master_sku_{prefix}").strip().upper()
+        new_variasi = st.text_input("Nama Variasi (Opsional, contoh: AHA250+MICELLAR WATE)", key="add_master_variasi").strip()
         new_barcode = st.text_input("Barcode Master (Opsional)", key="add_master_barcode").strip()
         
         st.markdown("---")
-        st.subheader("📦 Komposisi Produk Bundling (Max 7 Item)")
+        st.subheader("📦 Komposisi Produk (Max 7 Item)")
         
         items_input = []
         for i in range(1, 8):
@@ -193,14 +214,26 @@ with tab3:
             items_input.append({'qty': p_qty, 'sku': auto_sku, 'name': auto_name, 'barcode': auto_bc})
             st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
         
+        # Preview format ISI PRODUK otomatis
+        auto_isi_produk = format_isi_produk(items_input)
+        if auto_isi_produk:
+            st.caption(f"Preview Kolom ISI PRODUK: **{auto_isi_produk}**")
+        
         if st.button("💾 Simpan SKU Baru", type="primary", use_container_width=True):
-            if not new_sku or not new_display_name or not items_input[0]['sku']:
-                st.error("Kode SKU Utama, Nama Etalase, serta Produk 1 WAJIB dipilih!")
+            if not new_sku or not items_input[0]['sku']:
+                st.error("Kode SKU Utama dan Produk 1 WAJIB dipilih!")
             else:
                 try:
+                    if prefix == "SYB" and not new_variasi:
+                        final_display_name = items_input[0]['name']
+                    elif new_variasi:
+                        final_display_name = f"{new_variasi} | {auto_isi_produk}"
+                    else:
+                        final_display_name = auto_isi_produk
+
                     supabase.table("skus").upsert({
                         "sku_code": new_sku,
-                        "display_name": new_display_name,
+                        "display_name": final_display_name,
                         "barcode": new_barcode
                     }).execute()
                     
@@ -248,14 +281,14 @@ with tab4:
         selected_sku = None
         
         if search_method == "Pilih dari Dropdown List":
-            all_skus_list = supabase.table("skus").select("sku_code, display_name").order("sku_code").execute()
+            all_skus_list = supabase.table("skus").select("sku_code, display_name").order("sku_code").limit(5000).execute()
             if all_skus_list.data:
                 sku_options = ["-- Pilih SKU --"] + [f"{item['sku_code']} - {item['display_name']}" for item in all_skus_list.data]
                 choice = st.selectbox("Daftar SKU Terdaftar:", sku_options)
                 if choice != "-- Pilih SKU --":
                     selected_sku = choice.split(" - ")[0]
         else:
-            typed_sku = st.text_input("Ketik Kode SKU (misal: BSYB005 atau SYB001):", "").strip().upper()
+            typed_sku = st.text_input("Ketik Kode SKU (misal: BPO01 atau SYB001):", "").strip().upper()
             if typed_sku:
                 selected_sku = typed_sku
 
@@ -270,7 +303,7 @@ with tab4:
                 comps_info = supabase.table("sku_components").select("*").eq("parent_sku", selected_sku).execute().data
                 
                 st.info(f"📌 **Detail SKU Terpilih:** {sku_info['sku_code']}")
-                st.write(f"**Nama Etalase:** {sku_info['display_name']}")
+                st.write(f"**Variasi / Isi Produk:** {sku_info['display_name']}")
                 if sku_info.get('barcode'):
                     st.write(f"**Barcode:** {sku_info['barcode']}")
                 
@@ -321,7 +354,7 @@ with tab4:
                     st.markdown("---")
                     st.subheader(f"Form Edit SKU: {selected_sku}")
                     
-                    edit_display_name = st.text_input("Nama Etalase / Produk*", value=sku_info.get('display_name') or "", key=f"edit_disp_{selected_sku}")
+                    edit_display_name = st.text_input("Variasi / Isi Produk*", value=sku_info.get('display_name') or "", key=f"edit_disp_{selected_sku}")
                     edit_barcode = st.text_input("Barcode Master", value=sku_info.get('barcode') or "", key=f"edit_bc_{selected_sku}")
                     
                     st.markdown("---")
@@ -374,7 +407,7 @@ with tab4:
                         
                     if st.button("💾 Simpan Perubahan Edit", type="primary", use_container_width=True, key=f"btn_save_edit_{selected_sku}"):
                         if not edit_display_name:
-                            st.error("Nama Etalase tidak boleh kosong!")
+                            st.error("Variasi / Isi Produk tidak boleh kosong!")
                         else:
                             try:
                                 supabase.table("skus").update({
