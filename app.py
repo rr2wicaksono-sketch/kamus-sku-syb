@@ -68,6 +68,11 @@ def get_all_skus_cached():
     return res.data if res.data else []
 
 @st.cache_data(ttl=300)
+def get_all_components_cached():
+    res = supabase.table("sku_components").select("parent_sku, qty, product_name, child_sku, barcode").limit(10000).execute()
+    return res.data if res.data else []
+
+@st.cache_data(ttl=300)
 def get_satuan_options():
     res = supabase.table("skus").select("sku_code, display_name, barcode").like("sku_code", "SYB%").order("display_name").limit(5000).execute()
     options = ["-- Pilih Produk Satuan --"]
@@ -88,35 +93,29 @@ def get_satuan_options():
 
 satuan_options, satuan_mapping, barcode_lookup = get_satuan_options()
 
-def search_skus_by_term(term):
-    term = term.strip()
-    if not term:
+# Pencarian di memori Python (bebas error PostgREST PGRST100 terhadap koma, kurung, persen, maupun ×)
+def filter_skus_in_memory(term, all_skus, all_comps):
+    term_clean = term.strip().lower()
+    if not term_clean:
         return None
-    term_upper = term.upper()
-    
-    exact_res = supabase.table("skus").select("sku_code").eq("sku_code", term_upper).execute()
-    matched = set()
-    if exact_res.data:
-        matched.add(exact_res.data[0]['sku_code'])
         
-    sku_master_res = supabase.table("skus").select("sku_code").or_(
-        f"sku_code.ilike.%{term}%,display_name.ilike.%{term}%,barcode.ilike.%{term}%"
-    ).limit(2000).execute()
-    
-    comp_res = supabase.table("sku_components").select("parent_sku").or_(
-        f"product_name.ilike.%{term}%,child_sku.ilike.%{term}%,barcode.ilike.%{term}%"
-    ).limit(2000).execute()
-    
-    if sku_master_res.data:
-        for item in sku_master_res.data:
+    matched = set()
+    for item in all_skus:
+        sku_c = str(item.get('sku_code') or '').lower()
+        disp_n = str(item.get('display_name') or '').lower()
+        bc = str(item.get('barcode') or '').lower()
+        if term_clean in sku_c or term_clean in disp_n or term_clean in bc:
             matched.add(item['sku_code'])
-    if comp_res.data:
-        for item in comp_res.data:
-            matched.add(item['parent_sku'])
+            
+    for comp in all_comps:
+        p_name = str(comp.get('product_name') or '').lower()
+        c_sku = str(comp.get('child_sku') or '').lower()
+        bc = str(comp.get('barcode') or '').lower()
+        if term_clean in p_name or term_clean in c_sku or term_clean in bc:
+            matched.add(comp['parent_sku'])
             
     return matched
 
-# Callback khusus Reset Pencarian (dijalankan sebelum widget dirender agar tidak error)
 def reset_search_fields():
     st.session_state["search_q1"] = ""
     st.session_state["search_q2"] = ""
@@ -155,23 +154,31 @@ with tab1:
     active_queries = [q for q in [query_1, query_2, query_3] if q]
 
     if active_queries:
+        all_skus_cached = get_all_skus_cached()
+        all_comps_cached = get_all_components_cached()
+        sku_dict = {item['sku_code']: item for item in all_skus_cached}
+        
+        comps_by_parent = {}
+        for c in all_comps_cached:
+            p_sku = c['parent_sku']
+            comps_by_parent.setdefault(p_sku, []).append(c)
+
         exact_single = None
         if len(active_queries) == 1:
             q_up = active_queries[0].upper()
-            ex_check = supabase.table("skus").select("*").eq("sku_code", q_up).execute()
-            if ex_check.data:
-                exact_single = {ex_check.data[0]['sku_code']}
+            if q_up in sku_dict:
+                exact_single = {q_up}
 
         if exact_single:
             matched_skus = exact_single
         else:
-            result_sets = [search_skus_by_term(q) for q in active_queries]
+            result_sets = [filter_skus_in_memory(q, all_skus_cached, all_comps_cached) for q in active_queries]
             matched_skus = set.intersection(*result_sets) if result_sets else set()
 
         label_query = " + ".join([f"'{q}'" for q in active_queries])
 
         if matched_skus:
-            all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
+            all_matches = sorted([sku_dict[s] for s in matched_skus if s in sku_dict], key=lambda x: x['sku_code'])
             
             st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **{label_query}**")
             
@@ -184,24 +191,23 @@ with tab1:
                     with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
                         st.write(f"**Kode SKU:** `{sku_code}`")
                         
-                        comps = supabase.table("sku_components").select("qty, product_name, child_sku, barcode").eq("parent_sku", sku_code).execute()
+                        comps = comps_by_parent.get(sku_code, [])
                         
                         comp_rows = []
                         comp_barcodes = []
-                        if comps.data:
-                            for c in comps.data:
-                                c_sku = str(c.get('child_sku') or "").strip()
-                                c_bc = str(c.get('barcode') or "").strip()
-                                if not c_bc and c_sku.upper() in barcode_lookup:
-                                    c_bc = barcode_lookup[c_sku.upper()]
-                                if c_bc and c_bc not in comp_barcodes:
-                                    comp_barcodes.append(c_bc)
-                                comp_rows.append({
-                                    "QTY": c.get('qty', 1),
-                                    "SKU Satuan": c_sku if c_sku else "-",
-                                    "Nama Produk": c.get('product_name', '-'),
-                                    "Barcode": c_bc if c_bc else "-"
-                                })
+                        for c in comps:
+                            c_sku = str(c.get('child_sku') or "").strip()
+                            c_bc = str(c.get('barcode') or "").strip()
+                            if not c_bc and c_sku.upper() in barcode_lookup:
+                                c_bc = barcode_lookup[c_sku.upper()]
+                            if c_bc and c_bc not in comp_barcodes:
+                                comp_barcodes.append(c_bc)
+                            comp_rows.append({
+                                "QTY": c.get('qty', 1),
+                                "SKU Satuan": c_sku if c_sku else "-",
+                                "Nama Produk": c.get('product_name', '-'),
+                                "Barcode": c_bc if c_bc else "-"
+                            })
                         
                         if barcode_master:
                             st.write(f"**Barcode:** `{barcode_master}`")
@@ -249,9 +255,9 @@ with tab2:
         filter_text = st.text_input("🔎 Filter daftar (cari kode / variasi / isi produk / barcode):", "").strip()
         if filter_text:
             df_filt = df_skus[
-                df_skus['Kode SKU'].str.contains(filter_text, case=False, na=False) |
-                df_skus['Variasi / Isi Produk'].str.contains(filter_text, case=False, na=False) |
-                df_skus['Barcode'].str.contains(filter_text, case=False, na=False)
+                df_skus['Kode SKU'].str.contains(filter_text, case=False, na=False, regex=False) |
+                df_skus['Variasi / Isi Produk'].str.contains(filter_text, case=False, na=False, regex=False) |
+                df_skus['Barcode'].str.contains(filter_text, case=False, na=False, regex=False)
             ]
             st.dataframe(df_filt, use_container_width=True, hide_index=True, height=480)
         else:
