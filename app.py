@@ -189,7 +189,11 @@ with tab1:
                     barcode_master = str(item.get('barcode') or "").strip()
                     
                     with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
-                        st.write(f"**Kode SKU:** `{sku_code}`")
+                        # Highlight kuning stabilo pada Kode SKU
+                        st.markdown(
+                            f"**Kode SKU:** <span style='background-color: #FFE600; color: #000000; font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 1.05em;'>{sku_code}</span>",
+                            unsafe_allow_html=True
+                        )
                         
                         comps = comps_by_parent.get(sku_code, [])
                         
