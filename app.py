@@ -88,14 +88,12 @@ def get_satuan_options():
 
 satuan_options, satuan_mapping, barcode_lookup = get_satuan_options()
 
-# Fungsi pembantu untuk mencari himpunan parent_sku dari satu kata kunci
 def search_skus_by_term(term):
     term = term.strip()
     if not term:
         return None
     term_upper = term.upper()
     
-    # Cek kecocokan eksak kode SKU terlebih dahulu jika hanya 1 kata kunci
     exact_res = supabase.table("skus").select("sku_code").eq("sku_code", term_upper).execute()
     matched = set()
     if exact_res.data:
@@ -118,6 +116,12 @@ def search_skus_by_term(term):
             
     return matched
 
+# Callback khusus Reset Pencarian (dijalankan sebelum widget dirender agar tidak error)
+def reset_search_fields():
+    st.session_state["search_q1"] = ""
+    st.session_state["search_q2"] = ""
+    st.session_state["search_q3"] = ""
+
 # --- TAB 1: CARI SKU (MULTI-FILTER PRODUK 1, 2, 3) ---
 with tab1:
     st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Variasi**, atau kombinasi **Isi / Nama Produk**.")
@@ -132,11 +136,7 @@ with tab1:
     with col_reset:
         st.write(" ")
         st.write(" ")
-        if st.button("🔄 Reset", key="btn_reset_search", use_container_width=True):
-            st.session_state["search_q1"] = ""
-            st.session_state["search_q2"] = ""
-            st.session_state["search_q3"] = ""
-            st.rerun()
+        st.button("🔄 Reset", key="btn_reset_search", on_click=reset_search_fields, use_container_width=True)
 
     col_q2, col_q3 = st.columns(2)
     with col_q2:
@@ -155,7 +155,6 @@ with tab1:
     active_queries = [q for q in [query_1, query_2, query_3] if q]
 
     if active_queries:
-        # Jika hanya 1 query dan cocok eksak dengan Kode SKU (misal ketik langsung BPO67 atau SYB001)
         exact_single = None
         if len(active_queries) == 1:
             q_up = active_queries[0].upper()
@@ -166,7 +165,6 @@ with tab1:
         if exact_single:
             matched_skus = exact_single
         else:
-            # Hitung irisan (AND) dari semua kolom pencarian yang diisi
             result_sets = [search_skus_by_term(q) for q in active_queries]
             matched_skus = set.intersection(*result_sets) if result_sets else set()
 
@@ -221,7 +219,6 @@ with tab1:
                         else:
                             st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
                 
-                # Spacer bawah ekstra agar kartu paling terakhir bisa di-scroll sampai mentok
                 st.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
         else:
             st.error(f"Tidak ditemukan data SKU atau paket bundling yang memuat kombinasi: **{label_query}**")
@@ -339,10 +336,10 @@ with tab3:
                     with c_btn:
                         st.write(" ")
                         st.write(" ")
-                        if st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}"):
-                            st.session_state[f"add_drop_{i}"] = "-- Pilih Produk Satuan --"
-                            st.session_state[f"add_qty_{i}"] = 1
-                            st.rerun()
+                        def clear_add_slot(idx=i):
+                            st.session_state[f"add_drop_{idx}"] = "-- Pilih Produk Satuan --"
+                            st.session_state[f"add_qty_{idx}"] = 1
+                        st.button("🗑️ Kosongkan", key=f"btn_clr_add_{i}", on_click=clear_add_slot)
 
                     auto_sku = ""
                     auto_name = ""
@@ -530,10 +527,10 @@ with tab4:
                             with c_btn_e:
                                 st.write(" ")
                                 st.write(" ")
-                                if st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}"):
-                                    st.session_state[f"edit_drop_{selected_sku}_{i}"] = "-- Pilih Produk Satuan --"
-                                    st.session_state[f"e_qty_{selected_sku}_{i}"] = 1
-                                    st.rerun()
+                                def clear_edit_slot(s_code=selected_sku, idx=i):
+                                    st.session_state[f"edit_drop_{s_code}_{idx}"] = "-- Pilih Produk Satuan --"
+                                    st.session_state[f"e_qty_{s_code}_{idx}"] = 1
+                                st.button("🗑️ Kosongkan", key=f"btn_clr_edit_{selected_sku}_{i}", on_click=clear_edit_slot)
 
                             e_auto_sku = ""
                             e_auto_name = ""
