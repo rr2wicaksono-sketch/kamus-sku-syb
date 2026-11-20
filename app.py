@@ -5,6 +5,15 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Kamus SKU SYB", page_icon="📦", layout="centered")
 
+# CSS tambahan agar area dalam kotak scroll punya ruang kosong di bawah (anti terpotong saat expander dibuka)
+st.markdown("""
+<style>
+div[data-testid="stVerticalBlockBorderWrapper"] > div {
+    padding-bottom: 160px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 ADMIN_PASSWORD = "admin123"
 
 SUPABASE_URL = "https://cswevaxdtjnkakppsowx.supabase.co"
@@ -20,7 +29,6 @@ st.title("📦 Kamus & Management SKU SYB")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🔍 Cari SKU", "📖 Daftar Semua SKU", "➕ Tambah SKU Baru", "✏️ Edit & Hapus SKU"])
 
-# Cache hasil pencarian urutan SKU kosong agar perpindahan BPO <-> SYB instan
 @st.cache_data(ttl=300)
 def generate_next_sku(prefix):
     res = supabase.table("skus").select("sku_code").like("sku_code", f"{prefix}%").limit(5000).execute()
@@ -80,35 +88,96 @@ def get_satuan_options():
 
 satuan_options, satuan_mapping, barcode_lookup = get_satuan_options()
 
-# --- TAB 1: CARI SKU ---
-with tab1:
-    st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Variasi**, atau **Isi / Nama Produk**.")
-    query_text = st.text_input("Masukkan Kata Kunci Pencarian:", "", placeholder="Contoh: SYB001, BPO01, 8 997238 395232, Red Jelly...").strip()
-
-    if query_text:
-        query_upper = query_text.upper()
-        exact_sku_res = supabase.table("skus").select("*").eq("sku_code", query_upper).execute()
+# Fungsi pembantu untuk mencari himpunan parent_sku dari satu kata kunci
+def search_skus_by_term(term):
+    term = term.strip()
+    if not term:
+        return None
+    term_upper = term.upper()
+    
+    # Cek kecocokan eksak kode SKU terlebih dahulu jika hanya 1 kata kunci
+    exact_res = supabase.table("skus").select("sku_code").eq("sku_code", term_upper).execute()
+    matched = set()
+    if exact_res.data:
+        matched.add(exact_res.data[0]['sku_code'])
         
-        matched_skus = set()
-        if exact_sku_res.data:
-            matched_skus.add(exact_sku_res.data[0]['sku_code'])
-        else:
-            sku_master_res = supabase.table("skus").select("sku_code").or_(f"sku_code.ilike.%{query_text}%,display_name.ilike.%{query_text}%,barcode.ilike.%{query_text}%").execute()
-            comp_res = supabase.table("sku_components").select("parent_sku").or_(f"product_name.ilike.%{query_text}%,child_sku.ilike.%{query_text}%,barcode.ilike.%{query_text}%").execute()
+    sku_master_res = supabase.table("skus").select("sku_code").or_(
+        f"sku_code.ilike.%{term}%,display_name.ilike.%{term}%,barcode.ilike.%{term}%"
+    ).limit(2000).execute()
+    
+    comp_res = supabase.table("sku_components").select("parent_sku").or_(
+        f"product_name.ilike.%{term}%,child_sku.ilike.%{term}%,barcode.ilike.%{term}%"
+    ).limit(2000).execute()
+    
+    if sku_master_res.data:
+        for item in sku_master_res.data:
+            matched.add(item['sku_code'])
+    if comp_res.data:
+        for item in comp_res.data:
+            matched.add(item['parent_sku'])
             
-            if sku_master_res.data:
-                for item in sku_master_res.data:
-                    matched_skus.add(item['sku_code'])
-            if comp_res.data:
-                for item in comp_res.data:
-                    matched_skus.add(item['parent_sku'])
-                
+    return matched
+
+# --- TAB 1: CARI SKU (MULTI-FILTER PRODUK 1, 2, 3) ---
+with tab1:
+    st.write("Cari berdasarkan **Kode SKU**, **Barcode**, **Variasi**, atau kombinasi **Isi / Nama Produk**.")
+    
+    col_q1, col_reset = st.columns([5, 1])
+    with col_q1:
+        query_1 = st.text_input(
+            "Kata Kunci / Produk 1:", 
+            placeholder="Contoh: SYB001, BPO67, atau TONER BADAN COKLAT...", 
+            key="search_q1"
+        ).strip()
+    with col_reset:
+        st.write(" ")
+        st.write(" ")
+        if st.button("🔄 Reset", key="btn_reset_search", use_container_width=True):
+            st.session_state["search_q1"] = ""
+            st.session_state["search_q2"] = ""
+            st.session_state["search_q3"] = ""
+            st.rerun()
+
+    col_q2, col_q3 = st.columns(2)
+    with col_q2:
+        query_2 = st.text_input(
+            "Produk 2 (Opsional):", 
+            placeholder="Filter tambahan produk ke-2...", 
+            key="search_q2"
+        ).strip()
+    with col_q3:
+        query_3 = st.text_input(
+            "Produk 3 (Opsional):", 
+            placeholder="Filter tambahan produk ke-3...", 
+            key="search_q3"
+        ).strip()
+
+    active_queries = [q for q in [query_1, query_2, query_3] if q]
+
+    if active_queries:
+        # Jika hanya 1 query dan cocok eksak dengan Kode SKU (misal ketik langsung BPO67 atau SYB001)
+        exact_single = None
+        if len(active_queries) == 1:
+            q_up = active_queries[0].upper()
+            ex_check = supabase.table("skus").select("*").eq("sku_code", q_up).execute()
+            if ex_check.data:
+                exact_single = {ex_check.data[0]['sku_code']}
+
+        if exact_single:
+            matched_skus = exact_single
+        else:
+            # Hitung irisan (AND) dari semua kolom pencarian yang diisi
+            result_sets = [search_skus_by_term(q) for q in active_queries]
+            matched_skus = set.intersection(*result_sets) if result_sets else set()
+
+        label_query = " + ".join([f"'{q}'" for q in active_queries])
+
         if matched_skus:
             all_matches = supabase.table("skus").select("*").in_("sku_code", list(matched_skus)).order("sku_code").execute().data
             
-            st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **'{query_text}'**")
+            st.success(f"Ditemukan **{len(all_matches)}** hasil pencarian untuk: **{label_query}**")
             
-            with st.container(height=480, border=True):
+            with st.container(height=550, border=True):
                 for item in all_matches:
                     sku_code = item['sku_code']
                     display_name = item['display_name']
@@ -151,8 +220,11 @@ with tab1:
                             st.table(df_comp[["QTY", "SKU Satuan", "Nama Produk", "Barcode"]])
                         else:
                             st.info("SKU ini tidak memiliki rincian komponen bundling tambahan.")
+                
+                # Spacer bawah ekstra agar kartu paling terakhir bisa di-scroll sampai mentok
+                st.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
         else:
-            st.error(f"Tidak ditemukan data SKU atau produk dengan kata kunci: **'{query_text}'**")
+            st.error(f"Tidak ditemukan data SKU atau paket bundling yang memuat kombinasi: **{label_query}**")
 
 # --- TAB 2: DAFTAR SEMUA SKU ---
 with tab2:
@@ -217,7 +289,6 @@ with tab3:
         new_sku = st.text_input("Kode SKU Utama*", value=suggested_sku, key=f"add_master_sku_{prefix}").strip().upper()
         
         if not is_bundling:
-            # FORM CEPAT KHUSUS SKU SATUAN (SYB)
             new_satuan_name = st.text_input("Nama Produk Satuan*", key="add_satuan_name").strip()
             new_barcode = st.text_input("Barcode Produk", key="add_satuan_barcode").strip()
             
@@ -246,7 +317,6 @@ with tab3:
                     except Exception as e:
                         st.error(f"Gagal menyimpan data: {e}")
         else:
-            # FORM KHUSUS SKU BUNDLING (BPO)
             new_variasi = st.text_input("Nama Variasi (Opsional, contoh: AHA250+MICELLAR WATE)", key="add_master_variasi").strip()
             new_barcode = st.text_input("Barcode Master (Opsional)", key="add_master_barcode").strip()
             
