@@ -74,26 +74,37 @@ def get_all_components_cached():
 
 @st.cache_data(ttl=300)
 def get_satuan_options():
-    res = supabase.table("skus").select("sku_code, display_name, barcode").like("sku_code", "SYB%").order("display_name").limit(5000).execute()
+    # Ambil SEMUA SKU yang bukan bundling (tidak berawalan BPO), termasuk SYB, PFF, dll.
+    res = supabase.table("skus").select("sku_code, display_name, barcode").not_.like("sku_code", "BPO%").order("display_name").limit(5000).execute()
     options = ["-- Pilih Produk Satuan --"]
     mapping = {}
     barcode_by_sku = {}
+    label_by_sku = {}
+    label_by_name = {}
+    
     if res.data:
         for item in res.data:
-            name_label = item['display_name']
+            s_code = item['sku_code'].strip()
+            disp_name = item['display_name'].strip()
             bc = str(item.get('barcode') or "").strip()
-            options.append(name_label)
-            mapping[name_label] = {
-                "sku": item['sku_code'], 
-                "name": item['display_name'], 
+            
+            # Format label: "PFF - PUFF APLICATION" agar mudah dicari berdasarkan kode maupun nama
+            option_label = f"{s_code} - {disp_name}"
+            options.append(option_label)
+            
+            mapping[option_label] = {
+                "sku": s_code, 
+                "name": disp_name, 
                 "barcode": bc
             }
-            barcode_by_sku[item['sku_code'].upper()] = bc
-    return options, mapping, barcode_by_sku
+            barcode_by_sku[s_code.upper()] = bc
+            label_by_sku[s_code.upper()] = option_label
+            label_by_name[disp_name.upper()] = option_label
+            
+    return options, mapping, barcode_by_sku, label_by_sku, label_by_name
 
-satuan_options, satuan_mapping, barcode_lookup = get_satuan_options()
+satuan_options, satuan_mapping, barcode_lookup, label_by_sku, label_by_name = get_satuan_options()
 
-# Pencarian di memori Python (bebas error PostgREST PGRST100 terhadap koma, kurung, persen, maupun ×)
 def filter_skus_in_memory(term, all_skus, all_comps):
     term_clean = term.strip().lower()
     if not term_clean:
@@ -189,7 +200,6 @@ with tab1:
                     barcode_master = str(item.get('barcode') or "").strip()
                     
                     with st.expander(f"📦 **{sku_code}** - {display_name}", expanded=True if len(all_matches) <= 3 else False):
-                        # Highlight kuning stabilo pada Kode SKU
                         st.markdown(
                             f"**Kode SKU:** <span style='background-color: #FFE600; color: #000000; font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 1.05em;'>{sku_code}</span>",
                             unsafe_allow_html=True
@@ -523,10 +533,12 @@ with tab4:
                             c_drop_e, c_btn_e = st.columns([5, 1])
                             with c_drop_e:
                                 default_idx = 0
-                                ex_name = existing_comp.get('product_name') or ""
+                                ex_sku = str(existing_comp.get('child_sku') or "").strip().upper()
+                                ex_name = str(existing_comp.get('product_name') or "").strip().upper()
                                 
-                                if ex_name and ex_name in satuan_options:
-                                    default_idx = satuan_options.index(ex_name)
+                                matched_label = label_by_sku.get(ex_sku) or label_by_name.get(ex_name)
+                                if matched_label and matched_label in satuan_options:
+                                    default_idx = satuan_options.index(matched_label)
 
                                 selected_edit_prod = st.selectbox(
                                     f"Pilih / Ganti Produk Satuan {i}:", 
